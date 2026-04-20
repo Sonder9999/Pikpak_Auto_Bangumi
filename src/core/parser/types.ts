@@ -9,4 +9,5 @@ export interface Episode {
   group: string;
   resolution: string | null;
   source: string | null;
+  year: string | null;
 }

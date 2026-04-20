@@ -6,6 +6,7 @@ import { rssRoutes } from "./routes/rss.ts";
 import { rulesRoutes } from "./routes/rules.ts";
 import { configRoutes } from "./routes/config.ts";
 import { tasksRoutes } from "./routes/tasks.ts";
+import { danmakuRoutes } from "./routes/danmaku.ts";
 import { jwtAuth } from "./middleware/auth.ts";
 
 const logger = createLogger("server");
@@ -25,6 +26,7 @@ const app = new Elysia()
   .use(rulesRoutes)
   .use(configRoutes)
   .use(tasksRoutes)
+  .use(danmakuRoutes)
   .get("/api/health", () => ({ status: "ok", timestamp: new Date().toISOString() }))
   .listen(config.general.port);
 

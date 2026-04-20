@@ -8,6 +8,13 @@
       "when": 1776686791492,
       "tag": "0000_pale_silver_fox",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1776695134615,
+      "tag": "0001_outstanding_toro",
+      "breakpoints": true
     }
   ]
 }

@@ -89,6 +89,7 @@ export function updateConfig(partial: Partial<AppConfig>): AppConfig {
     pikpak: { ...current.pikpak, ...(partial.pikpak ?? {}) },
     rss: { ...current.rss, ...(partial.rss ?? {}) },
     rename: { ...current.rename, ...(partial.rename ?? {}) },
+    dandanplay: { ...current.dandanplay, ...(partial.dandanplay ?? {}) },
   };
 
   const result = AppConfigSchema.safeParse(merged);

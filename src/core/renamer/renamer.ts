@@ -3,9 +3,29 @@ import { getConfig } from "../config/config.ts";
 import type { PikPakClient } from "../pikpak/client.ts";
 import { getTasksByStatus, updateTaskStatus } from "../pikpak/task-manager.ts";
 import { rawParser } from "../parser/raw-parser.ts";
+import { searchAnime } from "../tmdb/index.ts";
 import type { Episode } from "../parser/types.ts";
 
 const logger = createLogger("renamer");
+
+/** Rename result passed to post-rename hooks */
+export interface RenameResult {
+  taskId: number;
+  pikpakFileId: string;
+  parentFolderId: string;
+  renamedName: string;
+  parsedEpisode: Episode;
+}
+
+/** Post-rename callback type */
+export type PostRenameHandler = (client: PikPakClient, result: RenameResult) => Promise<void>;
+
+let _postRenameHandler: PostRenameHandler | null = null;
+
+/** Register a callback to be invoked after each successful rename */
+export function setPostRenameHandler(handler: PostRenameHandler | null): void {
+  _postRenameHandler = handler;
+}
 
 /** Render a rename template with episode metadata */
 export function renderTemplate(template: string, ep: Episode, ext: string): string {
@@ -16,6 +36,7 @@ export function renderTemplate(template: string, ep: Episode, ext: string): stri
     .replace(/\{season\}/g, season)
     .replace(/\{episode\}/g, episode)
     .replace(/\{title\}/g, ep.nameEn ?? ep.nameZh ?? ep.nameJp ?? "Unknown")
+    .replace(/\{year\}/g, ep.year ?? "")
     .replace(/\{group\}/g, ep.group ?? "")
     .replace(/\{resolution\}/g, ep.resolution ?? "")
     .replace(/\{source\}/g, ep.source ?? "")
@@ -29,8 +50,8 @@ function getExtension(fileName: string): string {
   return fileName.slice(dot + 1);
 }
 
-/** Build the renamed file name from original name using config template */
-export function buildRenamedName(originalName: string): string | null {
+/** Build the renamed file name from original name using config template. Also returns parsed episode. */
+export async function buildRenamedName(originalName: string): Promise<{ name: string; episode: Episode } | null> {
   const config = getConfig();
   const ep = rawParser(originalName);
   if (!ep || ep.episode <= 0) {
@@ -43,11 +64,21 @@ export function buildRenamedName(originalName: string): string | null {
     ep.season = 1;
   }
 
+  // TMDB lookup for advance mode
+  if (config.rename.method === "advance") {
+    const parsedTitle = ep.nameEn ?? ep.nameZh ?? ep.nameJp ?? "Unknown";
+    const tmdb = await searchAnime(parsedTitle);
+    if (tmdb) {
+      ep.nameEn = tmdb.officialTitle;
+      ep.year = tmdb.year;
+    }
+  }
+
   const ext = getExtension(originalName);
   const template = config.rename.template;
   const renamed = renderTemplate(template, ep, ext);
   logger.debug("Template rendered", { originalName, renamed, template });
-  return renamed;
+  return { name: renamed, episode: ep };
 }
 
 /** Rename a single file on PikPak with retry logic */
@@ -102,8 +133,8 @@ export async function processRenames(client: PikPakClient): Promise<number> {
       continue;
     }
 
-    const newName = buildRenamedName(originalName);
-    if (!newName) {
+    const renameInfo = await buildRenamedName(originalName);
+    if (!renameInfo) {
       logger.warn("Could not build rename target", { taskId: task.id, originalName });
       updateTaskStatus(task.id, "error", { errorMessage: "Cannot parse metadata for rename" });
       continue;
@@ -112,16 +143,31 @@ export async function processRenames(client: PikPakClient): Promise<number> {
     const ok = await renameWithRetry(
       client,
       task.pikpakFileId,
-      newName,
+      renameInfo.name,
       config.rename.maxRetries,
       config.rename.retryBaseDelayMs
     );
 
     if (ok) {
-      updateTaskStatus(task.id, "renamed", { renamedName: newName });
+      updateTaskStatus(task.id, "renamed", { renamedName: renameInfo.name });
       renamed++;
+
+      // Post-rename hook (e.g., danmaku download)
+      if (_postRenameHandler) {
+        try {
+          await _postRenameHandler(client, {
+            taskId: task.id,
+            pikpakFileId: task.pikpakFileId,
+            parentFolderId: task.cloudPath ?? "",
+            renamedName: renameInfo.name,
+            parsedEpisode: renameInfo.episode,
+          });
+        } catch (e) {
+          logger.warn("Post-rename handler failed", { taskId: task.id, error: String(e) });
+        }
+      }
     } else {
-      updateTaskStatus(task.id, "error", { errorMessage: `Rename failed: ${newName}` });
+      updateTaskStatus(task.id, "error", { errorMessage: `Rename failed: ${renameInfo.name}` });
     }
   }
 

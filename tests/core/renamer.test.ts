@@ -113,8 +113,8 @@ describe("buildRenamedName", () => {
     const result = buildRenamedName("[Lilith-Raws] Sousou no Frieren - 05 [Baha][WEB-DL][1080p][AVC AAC][CHT][MP4].mp4");
     expect(result).not.toBeNull();
     // Should contain S01E05 (season defaults to 1)
-    expect(result!).toContain("E05");
-    expect(result!).toEndWith(".mp4");
+    expect(result!.name).toContain("E05");
+    expect(result!.name).toEndWith(".mp4");
   });
 
   test("returns null for unparseable filename", () => {
@@ -125,14 +125,14 @@ describe("buildRenamedName", () => {
   test("handles filename with season info", () => {
     const result = buildRenamedName("[SubGroup] Title S02E10 [1080P].mkv");
     expect(result).not.toBeNull();
-    expect(result!).toContain("S02");
-    expect(result!).toContain("E10");
+    expect(result!.name).toContain("S02");
+    expect(result!.name).toContain("E10");
   });
 
   test("defaults season to 1 when not detected", () => {
     const result = buildRenamedName("[SubGroup] Some Anime - 03 [1080P].mkv");
     expect(result).not.toBeNull();
-    expect(result!).toContain("S01");
-    expect(result!).toContain("E03");
+    expect(result!.name).toContain("S01");
+    expect(result!.name).toContain("E03");
   });
 });

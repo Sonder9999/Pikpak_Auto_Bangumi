@@ -141,17 +141,17 @@ describe("E2E: RSS -> Parse -> Filter -> Task -> Rename", () => {
     });
 
     // 8. Build rename target
-    const renamedName = buildRenamedName(frierenItem.title);
-    expect(renamedName).not.toBeNull();
-    expect(renamedName!).toContain("E05");
-    expect(renamedName!).toContain("S01");
+    const renameInfo = buildRenamedName(frierenItem.title);
+    expect(renameInfo).not.toBeNull();
+    expect(renameInfo!.name).toContain("E05");
+    expect(renameInfo!.name).toContain("S01");
 
     // 9. Mark as renamed
     const finalTask = updateTaskStatus(task.id, "renamed", {
-      renamedName: renamedName!,
+      renamedName: renameInfo!.name,
     });
     expect(finalTask.status).toBe("renamed");
-    expect(finalTask.renamedName).toBe(renamedName);
+    expect(finalTask.renamedName).toBe(renameInfo!.name);
   });
 
   test("deduplication prevents double submission", () => {

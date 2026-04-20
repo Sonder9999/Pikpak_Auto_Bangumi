@@ -160,11 +160,8 @@ export class PikPakAuth {
       }
       const refreshed = await this.refreshAccessToken();
       if (refreshed) {
-        const valid2 = await this.verifyToken();
-        if (valid2) {
-          logger.info("Authenticated after token refresh");
-          return true;
-        }
+        logger.info("Authenticated after token refresh");
+        return true;
       }
       logger.warn("Cached token invalid, proceeding to login");
     }
@@ -301,6 +298,7 @@ export class PikPakAuth {
       const headers: Record<string, string> = {
         "User-Agent": c.userAgent,
         "Authorization": `Bearer ${this.accessToken}`,
+        "X-Device-ID": this.deviceId,
       };
       const url = `${DRIVE_API_BASE}/drive/v1/tasks?type=offline&page_token=&page_size=1`;
       const resp = await fetch(url, { headers });

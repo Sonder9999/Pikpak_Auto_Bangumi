@@ -55,3 +55,14 @@ export const pikpakTasks = sqliteTable("pikpak_tasks", {
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
+
+// Danmaku Cache
+export const danmakuCache = sqliteTable("danmaku_cache", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  episodeId: integer("episode_id").notNull(),
+  animeTitle: text("anime_title").notNull(),
+  episodeTitle: text("episode_title"),
+  pikpakFileId: text("pikpak_file_id"),
+  xmlFileId: text("xml_file_id"),
+  downloadedAt: text("downloaded_at").notNull().$defaultFn(() => new Date().toISOString()),
+});

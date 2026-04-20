@@ -276,5 +276,6 @@ export function rawParser(raw: string): Episode | null {
     group,
     resolution,
     source,
+    year: null,
   };
 }

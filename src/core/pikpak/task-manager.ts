@@ -90,7 +90,7 @@ export function createTaskRecord(
 export function updateTaskStatus(
   taskId: number,
   status: "pending" | "downloading" | "complete" | "error" | "renamed",
-  extra?: { pikpakTaskId?: string; pikpakFileId?: string; cloudPath?: string; errorMessage?: string; renamedName?: string }
+  extra?: { pikpakTaskId?: string; pikpakFileId?: string; cloudPath?: string; errorMessage?: string; renamedName?: string; originalName?: string }
 ) {
   const db = getDb();
   return db
@@ -150,6 +150,7 @@ export async function submitDownload(
     updateTaskStatus(taskRecord.id, "downloading", {
       pikpakTaskId: resp.task?.id,
       pikpakFileId: resp.task?.file_id ?? resp.file?.id,
+      cloudPath: parentFolderId,
     });
 
     logger.info("Download submitted", {
@@ -184,6 +185,7 @@ export async function pollTaskStatuses(client: PikPakClient): Promise<void> {
     if (remote.phase === "PHASE_TYPE_COMPLETE") {
       updateTaskStatus(local.id, "complete", {
         pikpakFileId: remote.file_id,
+        originalName: remote.file_name,
       });
       logger.info("Task completed", { taskId: local.id, fileName: remote.file_name });
     } else if (remote.phase === "PHASE_TYPE_ERROR") {

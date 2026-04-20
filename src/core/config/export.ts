@@ -23,6 +23,9 @@ export function exportConfig(sanitize = true): AppConfig {
     if (config.general.jwtSecret.length > 0) {
       config.general.jwtSecret = "***";
     }
+    if (config.dandanplay.appSecret.length > 0) {
+      config.dandanplay.appSecret = "***";
+    }
   }
 
   return config;
@@ -47,6 +50,9 @@ export function importConfig(input: unknown): AppConfig {
   }
   if (imported.general.jwtSecret === "***") {
     imported.general.jwtSecret = current.general.jwtSecret;
+  }
+  if (imported.dandanplay.appSecret === "***") {
+    imported.dandanplay.appSecret = current.dandanplay.appSecret;
   }
 
   saveConfig(imported);
