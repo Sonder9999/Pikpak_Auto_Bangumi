@@ -5,8 +5,7 @@
 openspec/
 
 # Private credentials (never commit)
-docs/private-credentials.md
-docs/
+docs/*.md
 
 # Dependencies
 node_modules/
