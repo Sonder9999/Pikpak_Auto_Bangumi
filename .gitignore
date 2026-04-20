@@ -1,0 +1,30 @@
+# Project management (not source code)
+.claude/
+.github/
+.codex/
+openspec/
+
+# Private credentials (never commit)
+docs/private-credentials.md
+docs/
+
+# Dependencies
+node_modules/
+bun.lock
+
+# Build
+dist/
+
+# Data & runtime (tokens, DB, task maps)
+data/
+logs/
+config.json
+*.local
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
