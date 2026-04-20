@@ -1,7 +1,7 @@
 import { mkdirSync, appendFileSync } from "fs";
 import { join } from "path";
 
-const LOG_DIR = join(import.meta.dir, "../../../logs");
+const LOG_DIR = join(import.meta.dir, "../../logs");
 
 export type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR";
 

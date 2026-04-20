@@ -16,7 +16,7 @@ const logger = createLogger("pikpak");
 export class PikPakClient {
   private auth: PikPakAuth;
 
-  constructor(opts?: { tokenPath?: string; deviceId?: string }) {
+  constructor(opts?: { tokenPath?: string; deviceId?: string; refreshToken?: string }) {
     this.auth = new PikPakAuth(opts);
   }
 

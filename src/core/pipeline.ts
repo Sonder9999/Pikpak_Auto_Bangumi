@@ -27,6 +27,7 @@ export async function initCore(configPath?: string): Promise<boolean> {
   const client = getPikPakClient({
     tokenPath: config.pikpak.tokenCachePath,
     deviceId: config.pikpak.deviceId || undefined,
+    refreshToken: config.pikpak.refreshToken || undefined,
   });
 
   const authenticated = await client.authenticate(

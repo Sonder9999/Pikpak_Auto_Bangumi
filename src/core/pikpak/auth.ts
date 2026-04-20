@@ -53,9 +53,13 @@ export class PikPakAuth {
   deviceId: string;
   tokenPath: string;
 
-  constructor(opts?: { tokenPath?: string; deviceId?: string }) {
+  constructor(opts?: { tokenPath?: string; deviceId?: string; refreshToken?: string }) {
     this.tokenPath = opts?.tokenPath ?? DEFAULT_TOKEN_PATH;
     this.deviceId = opts?.deviceId ?? DEFAULT_DEVICE_ID;
+    if (opts?.refreshToken) {
+      this.refreshToken = opts.refreshToken;
+      logger.info("Seeded refresh token from config");
+    }
   }
 
   get cfg(): ModeConfig {
@@ -96,7 +100,7 @@ export class PikPakAuth {
 
   // ─── Captcha ──────────────────────────────────────────────────
 
-  async getCaptchaToken(action: string): Promise<string> {
+  async getCaptchaToken(action: string, username?: string): Promise<string> {
     const c = this.cfg;
     const sign = captchaSign(
       c.clientId, c.clientVersion, c.packageName,
@@ -111,6 +115,17 @@ export class PikPakAuth {
       headers["Authorization"] = `Bearer ${this.accessToken}`;
     }
 
+    const meta: Record<string, string> = {
+      captcha_sign: sign,
+      client_version: c.clientVersion,
+      package_name: c.packageName,
+      user_id: this.userId,
+      timestamp: c.timestamp,
+    };
+    if (username) {
+      meta.username = username;
+    }
+
     try {
       const resp = await fetch(`${AUTH_API_BASE}/v1/shield/captcha/init`, {
         method: "POST",
@@ -119,13 +134,7 @@ export class PikPakAuth {
           client_id: c.clientId,
           action,
           device_id: this.deviceId,
-          meta: {
-            captcha_sign: sign,
-            client_version: c.clientVersion,
-            package_name: c.packageName,
-            user_id: this.userId,
-            timestamp: c.timestamp,
-          },
+          meta,
         }),
       });
       const data = (await resp.json()) as CaptchaInitResponse;
@@ -140,7 +149,7 @@ export class PikPakAuth {
 
   // ─── Auth flows ───────────────────────────────────────────────
 
-  /** Full auth flow: cache -> LIB login -> WEB refresh fallback */
+  /** Full auth flow: cache -> WEB login -> LIB login -> refresh fallback */
   async auth(username?: string, password?: string): Promise<boolean> {
     // Step 1: Try cached token
     if (this.loadToken()) {
@@ -160,7 +169,20 @@ export class PikPakAuth {
       logger.warn("Cached token invalid, proceeding to login");
     }
 
-    // Step 2: Try LIB login (only if credentials provided)
+    // Step 2: Try WEB mode login first (captcha signing with SALTS)
+    if (username && password) {
+      this.mode = "web";
+      logger.info("Attempting WEB mode login with captcha...");
+      const webOk = await this.loginWithPassword(username, password);
+      if (webOk) {
+        this.saveToken();
+        logger.info("WEB login successful");
+        return true;
+      }
+      logger.warn("WEB login failed, trying LIB mode");
+    }
+
+    // Step 3: Try LIB login (only if credentials provided)
     if (username && password) {
       this.mode = "lib";
       logger.info("Attempting LIB mode login...");
@@ -170,10 +192,10 @@ export class PikPakAuth {
         logger.info("LIB login successful");
         return true;
       }
-      logger.warn("LIB login failed, trying WEB mode fallback");
+      logger.warn("LIB login failed");
     }
 
-    // Step 3: WEB mode fallback (requires existing refresh_token)
+    // Step 4: WEB mode refresh fallback (requires existing refresh_token)
     if (this.refreshToken) {
       this.mode = "web";
       logger.info("Attempting WEB mode with refresh_token...");
@@ -192,13 +214,28 @@ export class PikPakAuth {
     return false;
   }
 
-  /** LIB mode: password login */
+  /** Password login with captcha support */
   private async loginWithPassword(username: string, password: string): Promise<boolean> {
     try {
       const c = this.cfg;
+
+      // Get captcha token before login
+      const captchaToken = await this.getCaptchaToken("POST:/v1/auth/signin", username);
+      if (!captchaToken) {
+        logger.warn("Failed to obtain captcha token for login", { mode: this.mode });
+      }
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        "User-Agent": c.userAgent,
+      };
+      if (captchaToken) {
+        headers["X-Captcha-Token"] = captchaToken;
+      }
+
       const resp = await fetch(`${AUTH_API_BASE}/v1/auth/signin`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "User-Agent": c.userAgent },
+        headers,
         body: JSON.stringify({
           client_id: c.clientId,
           client_secret: c.clientSecret,
