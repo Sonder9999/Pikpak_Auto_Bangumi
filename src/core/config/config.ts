@@ -64,7 +64,10 @@ export function loadConfig(configPath?: string): AppConfig {
 
 export function saveConfig(config: AppConfig, configPath?: string): void {
   const targetPath = configPath ?? _configPath;
-  mkdirSync(dirname(targetPath), { recursive: true });
+  const dir = dirname(targetPath);
+  if (dir && dir !== ".") {
+    mkdirSync(dir, { recursive: true });
+  }
   writeFileSync(targetPath, JSON.stringify(config, null, 2), "utf-8");
   _config = config;
   logger.info("Config saved", { path: targetPath });
