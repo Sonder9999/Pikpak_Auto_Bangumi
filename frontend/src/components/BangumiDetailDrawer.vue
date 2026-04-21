@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { NDrawer, NDrawerContent, NButton, NIcon, NSpin, NEmpty, NTag, NInput, NCollapse, NCollapseItem } from 'naive-ui'
+import { NDrawer, NDrawerContent, NButton, NIcon, NSpin, NEmpty, NTag, NInput, NCollapse, NCollapseItem, useMessage } from 'naive-ui'
 import { OpenOutline, SearchOutline, CheckmarkCircleOutline, ListOutline } from '@vicons/ionicons5'
 import { searchMikan, getMikanBangumi, getSubscriptions, getRules } from '../api'
-
+import AdvancedSubscriptionOptions from './AdvancedSubscriptionOptions.vue'
+import ManualRssSubscriptionPanel from './ManualRssSubscriptionPanel.vue'
 interface BangumiItem {
   id: number
   name: string
@@ -20,7 +21,6 @@ interface BangumiItem {
     score?: number | null
   } | null
 }
-
 interface MikanSearchResult {
   mikanId: number
   title?: string
@@ -28,14 +28,12 @@ interface MikanSearchResult {
   image?: string | null
   posterUrl?: string | null
 }
-
 interface MikanEpisode {
   title: string
   size: string
   updatedAt: string
   magnet: string
 }
-
 interface MikanSubgroupPayload {
   id: number
   name: string
@@ -44,18 +42,15 @@ interface MikanSubgroupPayload {
   latestEpisodeTitle?: string
   latestUpdatedAt?: string
 }
-
 interface MikanBangumiResponse {
   subgroups?: MikanSubgroupPayload[]
 }
-
 interface SubscriptionSource {
   id: number
   name: string
   url: string
   bangumiSubjectId?: number | null
 }
-
 interface FilterRule {
   id: number
   name: string
@@ -63,7 +58,21 @@ interface FilterRule {
   mode: 'include' | 'exclude'
   sourceId?: number | null
 }
+interface RssPreviewItem {
+  title: string
+  link: string | null
+  homepage: string | null
+  magnetUrl: string | null
+  torrentUrl: string | null
+  sizeBytes: number | null
+  publishedAt: string | null
+}
 
+interface RssPreviewGroup {
+  groupName: string
+  itemCount?: number
+  items: RssPreviewItem[]
+}
 const props = defineProps<{
   show: boolean
   bangumi: BangumiItem | null
@@ -73,34 +82,25 @@ const emit = defineEmits<{
   (e: 'update:show', val: boolean): void
   (e: 'subscribed'): void
 }>()
-
+const message = useMessage()
 const handleClose = () => {
   emit('update:show', false)
 }
-
-// Mikan Search State
 const searchQuery = ref('')
 const MikanResults = ref<MikanSearchResult[]>([])
 const loadingSearch = ref(false)
 const selectedMikanId = ref<string | null>(null)
-
-// Mikan Detail State
 const loadingDetail = ref(false)
 const subtitleGroups = ref<MikanSubgroupPayload[]>([])
 const selectedSubgroup = ref<string | null>(null)
-
-// Advanced config
 const regexInclude = ref('')
 const regexExclude = ref('')
 const episodeOffset = ref('0')
-
-// Manual RSS state
 const manualRssUrl = ref('')
 const manualRssInclude = ref('')
 const manualRssExclude = ref('')
 const savingManualRss = ref(false)
 const existingManualSourceId = ref<number | null>(null)
-
 const isValidUrl = (url: string) => {
   const normalizedUrl = url.trim()
   return normalizedUrl.startsWith('http://') || normalizedUrl.startsWith('https://')
@@ -109,6 +109,7 @@ const isValidUrl = (url: string) => {
 const manualRssButtonLabel = computed(() => {
   return existingManualSourceId.value ? '更新订阅' : '保存订阅'
 })
+const ruleHint = '支持空格、&、&& 作为多个关键词同时命中；使用 |、.* 或 /.../ 时按原生正则处理。'
 
 const normalizeMikanSubgroups = (subgroups: MikanSubgroupPayload[]) => {
   return subgroups.map((subgroup) => {
@@ -131,7 +132,6 @@ const normalizeMikanSubgroups = (subgroups: MikanSubgroupPayload[]) => {
     }
   })
 }
-
 const loadExistingManualSubscription = async () => {
   if (!props.bangumi?.id) return
 
@@ -166,7 +166,6 @@ const loadExistingManualSubscription = async () => {
     console.error('Failed to load existing manual RSS subscription', error)
   }
 }
-
 const saveManualRss = async () => {
   if (!isValidUrl(manualRssUrl.value) || !props.bangumi?.id) return
 
@@ -198,7 +197,64 @@ const saveManualRss = async () => {
     savingManualRss.value = false
   }
 }
+const isFetchingPreview = ref(false)
+const hasPreviewedRss = ref(false)
+const rssPreviewTotal = ref(0)
+const rssPreviewExcludedCount = ref(0)
+const rssPreviewError = ref('')
+const rssPreviewGroups = ref<RssPreviewGroup[]>([])
 
+const resetRssPreview = () => {
+  hasPreviewedRss.value = false
+  rssPreviewTotal.value = 0
+  rssPreviewExcludedCount.value = 0
+  rssPreviewError.value = ''
+  rssPreviewGroups.value = []
+}
+const handlePreviewRss = async () => {
+  if (!isValidUrl(manualRssUrl.value)) return
+
+  isFetchingPreview.value = true
+  resetRssPreview()
+
+  try {
+    const requestData = {
+      rssUrl: manualRssUrl.value.trim(),
+      regexInclude: manualRssInclude.value || undefined,
+      regexExclude: manualRssExclude.value || undefined
+    }
+
+    const res = await fetch('/api/subscriptions/preview-rss', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestData)
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      const errorMessage = data?.error || '获取预览失败'
+      rssPreviewError.value = errorMessage
+      message.error(errorMessage)
+      return
+    }
+
+    const matchedGroups = Array.isArray(data?.matchedGroups) ? data.matchedGroups as RssPreviewGroup[] : []
+    const excluded = Array.isArray(data?.excluded) ? data.excluded as RssPreviewItem[] : []
+
+    rssPreviewGroups.value = matchedGroups
+    rssPreviewExcludedCount.value = excluded.length
+    rssPreviewTotal.value = matchedGroups.reduce((total, group) => total + group.items.length, 0) + excluded.length
+    hasPreviewedRss.value = true
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : '网络错误获取预览失败'
+    rssPreviewError.value = errorMessage
+    message.error(errorMessage)
+  } finally {
+    isFetchingPreview.value = false
+  }
+}
+watch([manualRssUrl, manualRssInclude, manualRssExclude], () => {
+  resetRssPreview()
+})
 watch(() => props.show, (newVal) => {
   if (newVal && props.bangumi) {
     searchQuery.value = props.bangumi.nameCn || props.bangumi.name
@@ -210,13 +266,11 @@ watch(() => props.show, (newVal) => {
     manualRssUrl.value = ''
     manualRssInclude.value = ''
     manualRssExclude.value = ''
-
-    // Auto trigger search
+    resetRssPreview()
     void handleSearch()
     void loadExistingManualSubscription()
   }
 })
-
 const handleSearch = async () => {
   if (!searchQuery.value) return
   loadingSearch.value = true
@@ -229,7 +283,6 @@ const handleSearch = async () => {
     loadingSearch.value = false
   }
 }
-
 const selectMikanBangumi = async (mikanId: string | number) => {
   selectedMikanId.value = mikanId.toString()
   loadingDetail.value = true
@@ -244,7 +297,6 @@ const selectMikanBangumi = async (mikanId: string | number) => {
     loadingDetail.value = false
   }
 }
-
 const subscribe = async () => {
   const bangumi = props.bangumi
   if (!bangumi || !selectedSubgroup.value || !selectedMikanId.value) return
@@ -283,7 +335,6 @@ const subscribe = async () => {
   <n-drawer :show="props.show" @update:show="handleClose" width="80%" placement="right" resizable>
     <n-drawer-content :title="bangumi?.nameCn || bangumi?.name || '番剧详情'" closable>
       <div v-if="bangumi" class="flex flex-col lg:flex-row gap-6">
-        <!-- Left Side: Poster & Info -->
         <div class="lg:w-1/3 flex flex-col gap-4">
           <img
             :src="bangumi.images?.large || bangumi.images?.common || undefined"
@@ -315,10 +366,7 @@ const subscribe = async () => {
             </a>
           </div>
         </div>
-
-        <!-- Right Side: Mikan Search & Subgroups -->
         <div class="lg:w-2/3 flex flex-col gap-6">
-          <!-- Step 1: Mikan Search -->
           <div class="bg-zinc-100 dark:bg-zinc-800/40 p-4 rounded-xl border border-zinc-200 dark:border-zinc-700/50">
             <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2">
               <n-icon><SearchOutline /></n-icon> 匹配 Mikan Project
@@ -351,8 +399,6 @@ const subscribe = async () => {
               </n-spin>
             </div>
           </div>
-
-          <!-- Step 2: Subtitle Groups Selection -->
           <div v-if="selectedMikanId" class="bg-zinc-100 dark:bg-zinc-800/40 p-4 rounded-xl border border-zinc-200 dark:border-zinc-700/50">
             <h3 class="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2">
               <n-icon><ListOutline /></n-icon> 选择字幕组订阅
@@ -374,8 +420,6 @@ const subscribe = async () => {
                       <CheckmarkCircleOutline />
                     </n-icon>
                   </div>
-
-                  <!-- Expanded Subgroup Episodes -->
                   <div v-if="selectedSubgroup === sub.name" class="px-2 py-1 mb-2 bg-white dark:bg-zinc-900/50 rounded-lg max-h-56 overflow-y-auto custom-scrollbar text-xs border border-zinc-200 dark:border-zinc-700/50">
                     <table class="w-full text-left">
                       <thead class="text-gray-400 border-b border-zinc-200 dark:border-zinc-800">
@@ -395,26 +439,15 @@ const subscribe = async () => {
                     </table>
                   </div>
                 </template>
-
-                <!-- Advanced Options -->
-                <n-collapse arrow-placement="right" class="mt-4">
-                  <n-collapse-item title="高级配置" name="1">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2">
-                      <div>
-                        <span class="text-xs text-gray-500 dark:text-gray-400 mb-1 block">包含正则</span>
-                        <n-input v-model:value="regexInclude" placeholder="例如：1080p" size="small" />
-                      </div>
-                      <div>
-                        <span class="text-xs text-gray-500 dark:text-gray-400 mb-1 block">排除正则</span>
-                        <n-input v-model:value="regexExclude" placeholder="例如：720p" size="small" />
-                      </div>
-                      <div>
-                        <span class="text-xs text-gray-500 dark:text-gray-400 mb-1 block">集数偏移</span>
-                        <n-input v-model:value="episodeOffset" placeholder="0" size="small" />
-                      </div>
-                    </div>
-                  </n-collapse-item>
-                </n-collapse>
+                <AdvancedSubscriptionOptions
+                  :include-rule="regexInclude"
+                  :exclude-rule="regexExclude"
+                  :episode-offset="episodeOffset"
+                  :rule-hint="ruleHint"
+                  @update:include-rule="regexInclude = $event"
+                  @update:exclude-rule="regexExclude = $event"
+                  @update:episode-offset="episodeOffset = $event"
+                />
 
                 <n-button
                   type="success"
@@ -430,43 +463,30 @@ const subscribe = async () => {
               <n-empty v-else-if="!loadingDetail" description="该番剧无字幕组信息" />
             </n-spin>
           </div>
-
-          <!-- Manual RSS Input -->
           <n-collapse arrow-placement="right">
             <n-collapse-item title="手动输入 RSS" name="manual-rss">
-              <div class="flex flex-col gap-3 pt-1">
-                <div>
-                  <span class="text-xs text-gray-500 dark:text-gray-400 mb-1 block">RSS 订阅地址 <span class="text-red-400">*</span></span>
-                  <n-input
-                    v-model:value="manualRssUrl"
-                    placeholder="https://mikanani.me/RSS/Bangumi?..."
-                    :status="manualRssUrl && !isValidUrl(manualRssUrl) ? 'error' : undefined"
-                  />
-                  <span v-if="manualRssUrl && !isValidUrl(manualRssUrl)" class="text-xs text-red-400 mt-1 block">请输入有效的 RSS URL（http:// 或 https://）</span>
-                </div>
-                <div class="grid grid-cols-2 gap-3">
-                  <div>
-                    <span class="text-xs text-gray-500 dark:text-gray-400 mb-1 block">包含正则（可选）</span>
-                    <n-input v-model:value="manualRssInclude" placeholder="例如：1080p" size="small" />
-                  </div>
-                  <div>
-                    <span class="text-xs text-gray-500 dark:text-gray-400 mb-1 block">排除正则（可选）</span>
-                    <n-input v-model:value="manualRssExclude" placeholder="例如：720p" size="small" />
-                  </div>
-                </div>
-                <n-button
-                  type="primary"
-                  block
-                  :disabled="!isValidUrl(manualRssUrl)"
-                  :loading="savingManualRss"
-                  @click="saveManualRss"
-                >
-                  {{ manualRssButtonLabel }}
-                </n-button>
-              </div>
+              <ManualRssSubscriptionPanel
+                :url="manualRssUrl"
+                :include-rule="manualRssInclude"
+                :exclude-rule="manualRssExclude"
+                :rule-hint="ruleHint"
+                :is-valid-url="isValidUrl(manualRssUrl)"
+                :button-label="manualRssButtonLabel"
+                :saving="savingManualRss"
+                :previewing="isFetchingPreview"
+                :has-previewed="hasPreviewedRss"
+                :preview-total="rssPreviewTotal"
+                :preview-excluded-count="rssPreviewExcludedCount"
+                :preview-error="rssPreviewError"
+                :preview-groups="rssPreviewGroups"
+                @update:url="manualRssUrl = $event"
+                @update:include-rule="manualRssInclude = $event"
+                @update:exclude-rule="manualRssExclude = $event"
+                @preview="handlePreviewRss"
+                @save="saveManualRss"
+              />
             </n-collapse-item>
           </n-collapse>
-
         </div>
       </div>
     </n-drawer-content>

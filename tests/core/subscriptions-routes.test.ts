@@ -183,4 +183,198 @@ describe("Subscriptions routes", function () {
       })
     );
   });
+
+  test("POST /api/subscriptions/preview-rss tests RSS parsing and regex matching", async () => {
+    const app = new Elysia().use(subscriptionsRoutes);
+
+    const mockupXml = `<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <title>Preview Feed</title>
+        <item>
+          <title>[Subgroup] Some Anime - 01 (1080p) [WebRip]</title>
+          <enclosure url="magnet:?xt=urn:btih:valid1"/>
+        </item>
+        <item>
+          <title>[Subgroup] Some Anime - 02 (1080p) [WebRip]</title>
+          <enclosure url="magnet:?xt=urn:btih:valid2"/>
+        </item>
+        <item>
+          <title>[Subgroup] Some Anime - 01 (720p) [WebRip]</title>
+          <enclosure url="magnet:?xt=urn:btih:excluded1"/>
+        </item>
+        <item>
+          <title>[Subgroup] Unrelated Anime - 01 (1080p)</title>
+          <enclosure url="magnet:?xt=urn:btih:unrelated"/>
+        </item>
+      </channel>
+    </rss>`;
+
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response(mockupXml, {
+        status: 200,
+        headers: { "Content-Type": "application/rss+xml" },
+      }))
+    );
+
+    const response = await app.handle(
+      new Request("http://localhost/api/subscriptions/preview-rss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: "https://example.com/preview.xml",
+          regexInclude: "Some Anime.*1080p",
+          regexExclude: "720p",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+
+    expect(data).toHaveProperty("matched");
+    expect(data).toHaveProperty("excluded");
+    expect(data.error).toBeNull();
+
+    expect(data.matched.length).toBe(2);
+    expect(data.matched[0].title).toBe("[Subgroup] Some Anime - 01 (1080p) [WebRip]");
+    expect(data.matched[0].magnetUrl).toBe("magnet:?xt=urn:btih:valid1");
+    // Assert parsing extraction
+    expect(data.matched[0].parsed).toBeDefined();
+    expect(data.matched[0].parsed.episode).toBe(1);
+
+    expect(data.excluded.length).toBe(2);
+    expect(data.excluded.some((item: any) => item.title.includes("720p"))).toBe(true);
+    expect(data.excluded.some((item: any) => item.title.includes("Unrelated Anime"))).toBe(true);
+  });
+
+  test("POST /api/subscriptions/preview-rss supports plain multi-keyword matching", async () => {
+    const app = new Elysia().use(subscriptionsRoutes);
+
+    const mockupXml = `<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <title>Preview Feed</title>
+        <item>
+          <title>[黒ネズミたち] 黑猫与魔女的教室 - 02 (CR 1920x1080 AVC AAC MKV)</title>
+          <link>https://example.com/episode-1</link>
+          <enclosure url="https://example.com/episode-1.torrent" length="734579904" type="application/x-bittorrent"/>
+          <torrent>
+            <contentLength>734579904</contentLength>
+            <pubDate>2026-04-20T01:50:00.213</pubDate>
+          </torrent>
+        </item>
+        <item>
+          <title>[黒ネズミたち] 黑猫与魔女的教室 - 01 (CR 1920x1080 AVC AAC MKV)</title>
+          <link>https://example.com/episode-0</link>
+          <enclosure url="https://example.com/episode-0.torrent" length="634579904" type="application/x-bittorrent"/>
+          <torrent>
+            <contentLength>634579904</contentLength>
+            <pubDate>2026-04-13T01:50:00.213</pubDate>
+          </torrent>
+        </item>
+        <item>
+          <title>[LoliHouse] 黑猫与魔女的教室 - 02 (CR 1920x1080 AVC AAC MKV)</title>
+          <link>https://example.com/episode-2</link>
+        </item>
+        <item>
+          <title>黑猫与魔女的教室 - 03 (CR 1920x1080 AVC AAC MKV)</title>
+          <link>https://example.com/episode-3</link>
+        </item>
+      </channel>
+    </rss>`;
+
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response(mockupXml, {
+        status: 200,
+        headers: { "Content-Type": "application/rss+xml" },
+      }))
+    );
+
+    const response = await app.handle(
+      new Request("http://localhost/api/subscriptions/preview-rss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rssUrl: "https://example.com/preview.xml",
+          regexInclude: "黒ネズミたち CR",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+
+    expect(data.matched.length).toBe(2);
+    expect(data.matchedGroups.length).toBe(1);
+    expect(data.matchedGroups[0].groupName).toBe("黒ネズミたち");
+    expect(data.matchedGroups[0].items[0].title).toContain("- 01 ");
+    expect(data.matchedGroups[0].items[1].title).toContain("- 02 ");
+    expect(data.matchedGroups[0].items[1].sizeBytes).toBe(734579904);
+    expect(data.matchedGroups[0].items[1].publishedAt).toBe("2026-04-20T01:50:00.213");
+    expect(data.excluded.length).toBe(2);
+  });
+
+  test("POST /api/subscriptions/preview-rss returns grouped buckets for mixed subtitle groups", async () => {
+    const app = new Elysia().use(subscriptionsRoutes);
+
+    const mockupXml = `<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0">
+      <channel>
+        <title>Preview Feed</title>
+        <item>
+          <title>[黒ネズミたち] 黑猫与魔女的教室 - 02 (CR 1920x1080 AVC AAC MKV)</title>
+          <link>https://example.com/episode-1</link>
+          <torrent>
+            <pubDate>2026-04-20T01:50:00.213</pubDate>
+          </torrent>
+        </item>
+        <item>
+          <title>[黒ネズミたち] 黑猫与魔女的教室 - 01 (CR 1920x1080 AVC AAC MKV)</title>
+          <link>https://example.com/episode-0</link>
+          <torrent>
+            <pubDate>2026-04-13T01:50:00.213</pubDate>
+          </torrent>
+        </item>
+        <item>
+          <title>[LoliHouse] 黑猫与魔女的教室 - 02 (CR 1920x1080 AVC AAC MKV)</title>
+          <link>https://example.com/episode-2</link>
+        </item>
+        <item>
+          <title>黑猫与魔女的教室 - 03 (CR 1920x1080 AVC AAC MKV)</title>
+          <link>https://example.com/episode-3</link>
+        </item>
+      </channel>
+    </rss>`;
+
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response(mockupXml, {
+        status: 200,
+        headers: { "Content-Type": "application/rss+xml" },
+      }))
+    );
+
+    const response = await app.handle(
+      new Request("http://localhost/api/subscriptions/preview-rss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rssUrl: "https://example.com/preview.xml",
+          regexInclude: "CR",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(200);
+    const data = await response.json();
+
+    expect(data.matched.length).toBe(4);
+    expect(data.matchedGroups.length).toBe(3);
+    expect(data.matchedGroups[0].groupName).toBe("LoliHouse");
+    expect(data.matchedGroups[1].groupName).toBe("黒ネズミたち");
+    expect(data.matchedGroups[1].items[0].title).toContain("- 01 ");
+    expect(data.matchedGroups[1].items[1].title).toContain("- 02 ");
+    expect(data.matchedGroups[2].groupName).toBe("未识别字幕组");
+    expect(data.excluded.length).toBe(0);
+  });
 });

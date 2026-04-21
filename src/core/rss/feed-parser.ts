@@ -10,6 +10,8 @@ export interface RssFeedItem {
   magnetUrl: string | null;
   torrentUrl: string | null;
   homepage: string | null;
+  sizeBytes?: number | null;
+  publishedAt?: string | null;
 }
 
 const xmlParser = new XMLParser({
@@ -60,6 +62,42 @@ export function parseRssXml(xml: string): RssFeedItem[] {
   if (!rawItems) return items;
   if (!Array.isArray(rawItems)) rawItems = [rawItems];
 
+  const readTorrentField = (item: Record<string, unknown>, field: string): unknown => {
+    const prefixedField = item[`torrent:${field}`];
+    if (prefixedField !== undefined) {
+      return prefixedField;
+    }
+
+    const torrentNode = item.torrent;
+    if (torrentNode && typeof torrentNode === "object") {
+      return (torrentNode as Record<string, unknown>)[field];
+    }
+
+    return undefined;
+  };
+
+  const readStringField = (value: unknown): string | null => {
+    if (typeof value !== "string") {
+      return null;
+    }
+
+    const normalizedValue = value.trim();
+    return normalizedValue ? normalizedValue : null;
+  };
+
+  const readNumberField = (value: unknown): number | null => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (typeof value !== "string") {
+      return null;
+    }
+
+    const parsedValue = Number(value.trim());
+    return Number.isFinite(parsedValue) ? parsedValue : null;
+  };
+
   for (const item of rawItems) {
     const title = item.title ?? "";
     const guid = item.guid?.["#text"] ?? item.guid ?? item.link ?? title;
@@ -88,6 +126,9 @@ export function parseRssXml(xml: string): RssFeedItem[] {
       magnetUrl = link;
     }
 
+    const sizeBytes = readNumberField(readTorrentField(item, "contentLength") ?? enclosure?.["@_length"]);
+    const publishedAt = readStringField(readTorrentField(item, "pubDate") ?? item.pubDate);
+
     items.push({
       title: String(title),
       guid: String(guid),
@@ -95,6 +136,8 @@ export function parseRssXml(xml: string): RssFeedItem[] {
       magnetUrl,
       torrentUrl,
       homepage,
+      sizeBytes,
+      publishedAt,
     });
   }
 

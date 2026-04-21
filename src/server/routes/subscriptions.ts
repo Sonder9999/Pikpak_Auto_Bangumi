@@ -2,7 +2,11 @@ import { Elysia, t } from "elysia";
 import { createSource, getAllSources, updateSource, type RssSource } from "../../core/rss/source-crud.ts";
 import { refreshScheduler } from "../../core/rss/scheduler.ts";
 import { createRule, deleteRule, getRulesBySourceId, updateRule } from "../../core/filter/rule-crud.ts";
+import { compileTitleMatcher } from "../../core/filter/title-pattern.ts";
 import { createLogger } from "../../core/logger.ts";
+import { fetchRssFeed } from "../../core/rss/feed-parser.ts";
+import { groupPreviewItems, type PreviewGroupItem } from "../../core/rss/preview-grouping.ts";
+import { rawParser } from "../../core/parser/raw-parser.ts";
 
 const logger = createLogger("api-subscriptions");
 
@@ -122,5 +126,80 @@ export const subscriptionsRoutes = new Elysia({ prefix: "/api/subscriptions" })
       regexInclude: t.Optional(t.String()),
       regexExclude: t.Optional(t.String()),
       episodeOffset: t.Optional(t.Number())
+    })
+  })
+  .post("/preview-rss", async ({ body }) => {
+    try {
+      const targetUrl = body.url || body.rssUrl;
+      if (!targetUrl) return new Response(JSON.stringify({ error: "URL is required" }), { status: 400 });
+
+      logger.info("Preview RSS request received", {
+        url: targetUrl,
+        hasInclude: Boolean(body.regexInclude),
+        hasExclude: Boolean(body.regexExclude),
+      });
+
+      const items = await fetchRssFeed(targetUrl);
+      const matched: PreviewGroupItem[] = [];
+      const excluded: PreviewGroupItem[] = [];
+
+      let includeMatcher: ReturnType<typeof compileTitleMatcher> | null = null;
+      let excludeMatcher: ReturnType<typeof compileTitleMatcher> | null = null;
+
+      try {
+        if (body.regexInclude) includeMatcher = compileTitleMatcher(body.regexInclude);
+        if (body.regexExclude) excludeMatcher = compileTitleMatcher(body.regexExclude);
+      } catch (err) {
+        return new Response(JSON.stringify({ error: "筛选规则格式无效" }), { status: 400 });
+      }
+
+      for (const item of items) {
+        const title = item.title;
+        let isMatched = true;
+
+        if (includeMatcher && !includeMatcher.test(title)) isMatched = false;
+        if (isMatched && excludeMatcher && excludeMatcher.test(title)) isMatched = false;
+
+        const parsed = rawParser(title);
+
+        const previewItem: PreviewGroupItem = {
+          title,
+          link: item.link,
+          homepage: item.homepage,
+          magnetUrl: item.magnetUrl,
+          torrentUrl: item.torrentUrl,
+          sizeBytes: item.sizeBytes ?? null,
+          publishedAt: item.publishedAt ?? null,
+          parsed,
+        };
+
+        if (isMatched) {
+          matched.push(previewItem);
+        } else {
+          excluded.push(previewItem);
+        }
+      }
+
+      const matchedGroups = groupPreviewItems(matched);
+
+      logger.info("Preview RSS request completed", {
+        url: targetUrl,
+        total: items.length,
+        matched: matched.length,
+        excluded: excluded.length,
+        matchedGroups: matchedGroups.length,
+      });
+
+      return { matched, matchedGroups, excluded, error: null };
+    } catch (e: any) {
+      logger.error("Preview fetching failed", { error: e.message });
+      return new Response(JSON.stringify({ error: e.message }), { status: 500 });
+    }
+  }, {
+    body: t.Object({
+      url: t.Optional(t.String()),
+      rssUrl: t.Optional(t.String()),
+      regexInclude: t.Optional(t.String()),
+      regexExclude: t.Optional(t.String()),
     })
   });

@@ -26,6 +26,7 @@ function initTestDb() {
     url TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
     poll_interval_ms INTEGER NOT NULL DEFAULT 300000,
+    bangumi_subject_id INTEGER,
     last_success_at TEXT,
     last_error_at TEXT,
     last_error TEXT,
@@ -155,7 +156,11 @@ describe("RSS XML parsing", () => {
       <title>[SubGroup] Another Anime - 02 [720p]</title>
       <link>https://example.com/2</link>
       <guid>guid-002</guid>
-      <enclosure url="https://example.com/file.torrent" type="application/x-bittorrent"/>
+      <enclosure url="https://example.com/file.torrent" length="734579904" type="application/x-bittorrent"/>
+      <torrent>
+        <contentLength>734579904</contentLength>
+        <pubDate>2026-04-20T01:50:00.213</pubDate>
+      </torrent>
     </item>
   </channel>
 </rss>`;
@@ -166,6 +171,8 @@ describe("RSS XML parsing", () => {
     expect(items[0]!.magnetUrl).toBe("magnet:?xt=urn:btih:abc123");
     expect(items[0]!.guid).toBe("guid-001");
     expect(items[1]!.torrentUrl).toBe("https://example.com/file.torrent");
+    expect(items[1]!.sizeBytes).toBe(734579904);
+    expect(items[1]!.publishedAt).toBe("2026-04-20T01:50:00.213");
   });
 
   test("parses single item (not array)", () => {

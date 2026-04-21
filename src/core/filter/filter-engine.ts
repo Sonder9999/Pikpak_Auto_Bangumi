@@ -2,6 +2,7 @@ import { and, eq, isNull, or } from "drizzle-orm";
 import { getDb } from "../db/connection.ts";
 import { filterRules } from "../db/schema.ts";
 import { createLogger } from "../logger.ts";
+import { compileTitleMatcher } from "./title-pattern.ts";
 
 const logger = createLogger("filter");
 
@@ -48,9 +49,9 @@ export function applyFilters<T extends FilterableItem>(
 
   // Step 1: Include filter (if any include rules exist)
   if (includeRules.length > 0) {
-    const includePatterns = includeRules.map((r) => new RegExp(r.pattern, "i"));
+    const includePatterns = includeRules.map((rule) => compileTitleMatcher(rule.pattern));
     result = result.filter((item) =>
-      includePatterns.some((re) => re.test(item.title))
+      includePatterns.some((matcher) => matcher.test(item.title))
     );
     logger.debug("Include filter applied", {
       before: items.length,
@@ -61,10 +62,10 @@ export function applyFilters<T extends FilterableItem>(
 
   // Step 2: Exclude filter
   if (excludeRules.length > 0) {
-    const excludePatterns = excludeRules.map((r) => new RegExp(r.pattern, "i"));
+    const excludePatterns = excludeRules.map((rule) => compileTitleMatcher(rule.pattern));
     const beforeExclude = result.length;
     result = result.filter(
-      (item) => !excludePatterns.some((re) => re.test(item.title))
+      (item) => !excludePatterns.some((matcher) => matcher.test(item.title))
     );
     logger.debug("Exclude filter applied", {
       before: beforeExclude,

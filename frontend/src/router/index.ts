@@ -5,13 +5,13 @@ import CollectionBoard from '../components/CollectionBoard.vue'
 const routes = [
   {
     path: '/',
-    name: 'Home',
+    name: 'home',
     component: CollectionBoard
   },
   {
     path: '/settings',
-    name: 'Settings',
-    component: () => import('../components/SettingsPage.vue') // will create later
+    name: 'settings',
+    component: () => import('../components/SettingsPage.vue')
   }
 ]
 

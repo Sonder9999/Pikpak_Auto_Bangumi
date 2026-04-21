@@ -19,6 +19,7 @@ function initTestDb() {
     name TEXT NOT NULL, url TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
     poll_interval_ms INTEGER NOT NULL DEFAULT 300000,
+    bangumi_subject_id INTEGER,
     last_success_at TEXT, last_error_at TEXT, last_error TEXT,
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL

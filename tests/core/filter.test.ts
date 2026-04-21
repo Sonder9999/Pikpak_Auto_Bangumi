@@ -22,6 +22,7 @@ function initTestDb() {
     url TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
     poll_interval_ms INTEGER NOT NULL DEFAULT 300000,
+    bangumi_subject_id INTEGER,
     last_success_at TEXT,
     last_error_at TEXT,
     last_error TEXT,
@@ -109,12 +110,16 @@ describe("Filter rule CRUD", () => {
   });
 
   test("rejects invalid regex", () => {
-    expect(() => createRule({ name: "Bad", pattern: "[invalid", mode: "include" })).toThrow("Invalid regex");
+    expect(() => createRule({ name: "Bad", pattern: "/[invalid/", mode: "include" })).toThrow("Invalid filter");
   });
 
   test("rejects invalid regex on update", () => {
     const created = createRule({ name: "Good", pattern: "good", mode: "include" });
-    expect(() => updateRule(created.id, { pattern: "(unclosed" })).toThrow("Invalid regex");
+    expect(() => updateRule(created.id, { pattern: "/(/" })).toThrow("Invalid filter");
+  });
+
+  test("accepts bracketed plain text filter", () => {
+    expect(() => createRule({ name: "Group", pattern: "[LoliHouse] CR", mode: "include" })).not.toThrow();
   });
 
   test("get rules by source id", () => {
@@ -220,5 +225,23 @@ describe("Filter engine", () => {
 
     const result = applyFilters(items, source.id);
     expect(result.length).toBe(2); // matches HEVC despite lowercase pattern
+  });
+
+  test("space separated plain terms require all keywords", () => {
+    const source = createSource({ name: "Feed", url: "https://example.com/rss" });
+    createRule({ name: "Group and HEVC", pattern: "LoliHouse HEVC", mode: "include" });
+
+    const result = applyFilters(items, source.id);
+    expect(result.length).toBe(1);
+    expect(result[0]!.title).toBe("[LoliHouse] Anime A - 01 [1080p] [HEVC]");
+  });
+
+  test("ampersand separated plain terms require all keywords", () => {
+    const source = createSource({ name: "Feed", url: "https://example.com/rss" });
+    createRule({ name: "LoliHouse and AVC", pattern: "LoliHouse && AVC", mode: "include" });
+
+    const result = applyFilters(items, source.id);
+    expect(result.length).toBe(1);
+    expect(result[0]!.title).toBe("[LoliHouse] Anime E - 05 [1080p] [AVC]");
   });
 });

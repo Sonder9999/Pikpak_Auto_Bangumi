@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../db/connection.ts";
 import { filterRules } from "../db/schema.ts";
 import { createLogger } from "../logger.ts";
+import { validateTitlePattern } from "./title-pattern.ts";
 
 const logger = createLogger("filter");
 
@@ -23,11 +24,10 @@ export interface UpdateRuleInput {
 
 export function createRule(input: CreateRuleInput) {
   const db = getDb();
-  // Validate regex before saving
   try {
-    new RegExp(input.pattern, "i");
+    validateTitlePattern(input.pattern);
   } catch {
-    throw new Error(`Invalid regex pattern: ${input.pattern}`);
+    throw new Error(`Invalid filter pattern: ${input.pattern}`);
   }
 
   const result = db
@@ -70,9 +70,9 @@ export function updateRule(id: number, input: UpdateRuleInput) {
 
   if (input.pattern !== undefined) {
     try {
-      new RegExp(input.pattern, "i");
+      validateTitlePattern(input.pattern);
     } catch {
-      throw new Error(`Invalid regex pattern: ${input.pattern}`);
+      throw new Error(`Invalid filter pattern: ${input.pattern}`);
     }
   }
 
