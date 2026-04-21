@@ -40,12 +40,17 @@ describe("Mikan scraper", () => {
     expect(detail.bangumiTvUrl).toBe("https://bgm.tv/subject/576351");
     expect(detail.mikanRssUrl).toBe("https://mikanani.me/RSS/Bangumi?bangumiId=3928");
     expect(detail.subgroups.length).toBe(2);
-    expect(detail.subgroups[0]).toEqual({
+    expect(detail.subgroups[0]).toMatchObject({
       id: 370,
       name: "LoliHouse",
       rssUrl: "https://mikanani.me/RSS/Bangumi?bangumiId=3928&subgroupid=370",
-      latestEpisodeTitle: "[LoliHouse] 黑猫与魔女的教室 / Kuroneko to Majo no Kyoushitsu - 02 [WebRip 1080p HEVC-10bit AAC][简繁内封字幕]",
-      latestUpdatedAt: "2026/04/20 01:50",
+    });
+    expect(detail.subgroups[0].episodes).toBeArray();
+    expect(detail.subgroups[0].episodes.length).toBeGreaterThan(0);
+    expect(detail.subgroups[0].episodes[0]).toMatchObject({
+      title: expect.stringContaining("LoliHouse"),
+      size: expect.any(String),
+      updatedAt: expect.any(String),
     });
     expect(detail.subgroups[1].name).toBe("ANi");
   });

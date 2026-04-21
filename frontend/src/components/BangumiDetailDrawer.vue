@@ -34,6 +34,42 @@ const regexInclude = ref('')
 const regexExclude = ref('')
 const episodeOffset = ref('0')
 
+// Manual RSS state
+const manualRssUrl = ref('')
+const manualRssInclude = ref('')
+const manualRssExclude = ref('')
+const savingManualRss = ref(false)
+
+const isValidUrl = (url: string) => {
+  return url.startsWith('http://') || url.startsWith('https://')
+}
+
+const saveManualRss = async () => {
+  if (!isValidUrl(manualRssUrl.value) || !props.bangumi?.id) return
+  savingManualRss.value = true
+  try {
+    const payload = {
+      bangumiId: props.bangumi.id,
+      rssUrl: manualRssUrl.value,
+      regexInclude: manualRssInclude.value || undefined,
+      regexExclude: manualRssExclude.value || undefined,
+    }
+    const res = await fetch('/api/subscriptions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    if (res.ok) {
+      emit('subscribed')
+      handleClose()
+    }
+  } catch (e) {
+    console.error('Manual RSS subscription failed', e)
+  } finally {
+    savingManualRss.value = false
+  }
+}
+
 watch(() => props.show, (newVal) => {
   if (newVal && props.bangumi) {
     searchQuery.value = props.bangumi.nameCn || props.bangumi.name
@@ -41,6 +77,9 @@ watch(() => props.show, (newVal) => {
     selectedMikanId.value = null
     subtitleGroups.value = []
     selectedSubgroup.value = null
+    manualRssUrl.value = ''
+    manualRssInclude.value = ''
+    manualRssExclude.value = ''
 
     // Auto trigger search
     handleSearch()
@@ -257,6 +296,42 @@ const subscribe = async () => {
               <n-empty v-else-if="!loadingDetail" description="该番剧无字幕组信息" />
             </n-spin>
           </div>
+
+          <!-- Manual RSS Input -->
+          <n-collapse arrow-placement="right">
+            <n-collapse-item title="手动输入 RSS" name="manual-rss">
+              <div class="flex flex-col gap-3 pt-1">
+                <div>
+                  <span class="text-xs text-gray-500 dark:text-gray-400 mb-1 block">RSS 订阅地址 <span class="text-red-400">*</span></span>
+                  <n-input
+                    v-model:value="manualRssUrl"
+                    placeholder="https://mikanani.me/RSS/Bangumi?..."
+                    :status="manualRssUrl && !isValidUrl(manualRssUrl) ? 'error' : undefined"
+                  />
+                  <span v-if="manualRssUrl && !isValidUrl(manualRssUrl)" class="text-xs text-red-400 mt-1 block">请输入有效的 RSS URL（http:// 或 https://）</span>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <span class="text-xs text-gray-500 dark:text-gray-400 mb-1 block">包含正则（可选）</span>
+                    <n-input v-model:value="manualRssInclude" placeholder="例如：1080p" size="small" />
+                  </div>
+                  <div>
+                    <span class="text-xs text-gray-500 dark:text-gray-400 mb-1 block">排除正则（可选）</span>
+                    <n-input v-model:value="manualRssExclude" placeholder="例如：720p" size="small" />
+                  </div>
+                </div>
+                <n-button
+                  type="primary"
+                  block
+                  :disabled="!isValidUrl(manualRssUrl)"
+                  :loading="savingManualRss"
+                  @click="saveManualRss"
+                >
+                  保存订阅
+                </n-button>
+              </div>
+            </n-collapse-item>
+          </n-collapse>
 
         </div>
       </div>

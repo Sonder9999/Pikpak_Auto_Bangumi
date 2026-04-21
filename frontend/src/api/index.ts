@@ -4,9 +4,12 @@ const api = axios.create({
   baseURL: '/api'
 });
 
-export const getBangumiCollections = (type?: number) => {
-  const query = type ? `?type=${type}` : '';
-  return api.get(`/bangumi/collections${query}`);
+export const getBangumiCollections = (type?: number, offset = 0, limit = 30) => {
+  const params = new URLSearchParams();
+  if (type) params.set('type', String(type));
+  params.set('offset', String(offset));
+  params.set('limit', String(limit));
+  return api.get(`/bangumi/collections?${params.toString()}`);
 };
 
 export const searchMikan = (q: string) => {

@@ -7,7 +7,14 @@ const COLLECTION_CACHE_TTL_MS = 5 * 60 * 1000;
 
 let bangumiToken = "";
 
-const collectionCache = new Map<number, { expiresAt: number; value: BangumiCollection[] }>();
+export interface BangumiCollectionPage {
+  data: BangumiCollection[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+const collectionCache = new Map<string, { expiresAt: number; value: BangumiCollectionPage }>();
 
 interface BangumiImagePayload {
   large?: string | null;
@@ -95,6 +102,7 @@ export class BangumiRequestError extends Error {
 export function initBangumi(token: string): void {
   bangumiToken = token.trim();
   collectionCache.clear();
+  currentUsername = null;
   logger.info("Bangumi client initialized", { configured: bangumiToken.length > 0 });
 }
 
@@ -184,7 +192,7 @@ function mapSubject(subject: BangumiSubjectPayload): BangumiSubject {
   };
 }
 
-export async function getCollections(type = 3): Promise<BangumiCollection[] | null> {
+export async function getCollections(type = 3, offset = 0, limit = 30): Promise<BangumiCollectionPage | null> {
   if (!isBangumiConfigured()) {
     logger.debug("Bangumi collections skipped: no token configured");
     return null;
@@ -202,24 +210,39 @@ export async function getCollections(type = 3): Promise<BangumiCollection[] | nu
     }
   }
 
-  const cached = collectionCache.get(type);
+  const cacheKey = `${type}-${offset}-${limit}`;
+  const cached = collectionCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
-    logger.debug("Bangumi collection cache hit", { type });
+    logger.debug("Bangumi collection cache hit", { type, offset, limit });
     return cached.value;
   }
 
-  const response = await fetchBangumi(`/users/${currentUsername}/collections?subject_type=2&type=${type}`);
-  const payload = (await response.json()) as { data: (BangumiCollectionPayload & { subject: BangumiSubjectPayload })[] };
+  const response = await fetchBangumi(
+    `/users/${currentUsername}/collections?subject_type=2&type=${type}&offset=${offset}&limit=${limit}`,
+  );
+  const payload = (await response.json()) as {
+    data: (BangumiCollectionPayload & { subject: BangumiSubjectPayload })[];
+    total?: number;
+    limit?: number;
+    offset?: number;
+  };
 
-  const value = (payload.data || [])
+  const data = (payload.data || [])
     .filter((item) => Boolean(item.subject?.id))
     .map((item) => ({
       type: typeof item.type === "number" ? item.type : type,
       subject: mapSubject(item.subject),
     }));
 
-  collectionCache.set(type, { expiresAt: Date.now() + COLLECTION_CACHE_TTL_MS, value });
-  logger.info("Bangumi collections cached", { type, count: value.length });
+  const value: BangumiCollectionPage = {
+    data,
+    total: typeof payload.total === "number" ? payload.total : data.length,
+    limit: typeof payload.limit === "number" ? payload.limit : limit,
+    offset: typeof payload.offset === "number" ? payload.offset : offset,
+  };
+
+  collectionCache.set(cacheKey, { expiresAt: Date.now() + COLLECTION_CACHE_TTL_MS, value });
+  logger.info("Bangumi collections cached", { type, offset, limit, count: data.length });
   return value;
 }
 

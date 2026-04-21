@@ -23,24 +23,32 @@ export const bangumiRoutes = new Elysia({ prefix: "/api/bangumi" })
       return jsonError(400, "Invalid collection type");
     }
 
+    const offset = Number(query.offset ?? "0");
+    const limit = Math.min(Number(query.limit ?? "30"), 100); // cap at 100
+    if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit <= 0) {
+      return jsonError(400, "Invalid pagination parameters");
+    }
+
     if (!isBangumiConfigured()) {
       return jsonError(401, "Bangumi token not configured");
     }
 
     try {
-      const collections = await getCollections(type);
-      return collections ?? [];
+      const result = await getCollections(type, offset, limit);
+      return result ?? { data: [], total: 0, limit, offset };
     } catch (error) {
       if (error instanceof BangumiRequestError && [401, 403].includes(error.status)) {
         return jsonError(401, "Bangumi token invalid or expired");
       }
 
-      logger.error("Failed to fetch Bangumi collections", { type, error: String(error) });
+      logger.error("Failed to fetch Bangumi collections", { type, offset, limit, error: String(error) });
       return jsonError(502, "Failed to fetch Bangumi collections");
     }
   }, {
     query: t.Object({
       type: t.Optional(t.String()),
+      offset: t.Optional(t.String()),
+      limit: t.Optional(t.String()),
     }),
   })
   .get("/subjects/:id", async ({ params }) => {

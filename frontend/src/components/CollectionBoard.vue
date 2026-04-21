@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, computed } from "vue";
 import { getBangumiCollections, getConfig, getSubscriptions } from "../api";
 import BangumiCard from "./BangumiCard.vue";
 import { NSkeleton, NEmpty, NButton } from "naive-ui";
@@ -10,9 +10,17 @@ const loading = ref(true);
 const collections = ref<any[]>([]);
 const subscribedIds = ref<number[]>([]);
 const isTokenConfigured = ref(true);
-const activeTab = ref(3); // 3 = playing by default
+const activeTab = ref<number | 'subscribed'>(3); // 3 = playing by default
 
-// Detail drawer variables
+// Pagination
+const currentPage = ref(1);
+const pageSize = 30;
+const total = ref(0);
+
+const totalPages = computed(() => Math.ceil(total.value / pageSize));
+const showPagination = computed(() => activeTab.value !== 'subscribed' && totalPages.value > 1);
+
+// Detail drawer
 import BangumiDetailDrawer from "./BangumiDetailDrawer.vue";
 const showDrawer = ref(false);
 const currentBangumi = ref<any>(null);
@@ -26,18 +34,18 @@ const onSubscribeSuccess = () => {
   fetchData();
 };
 
-// Tabs: 1=想看, 2=看过, 3=在看, 4=搁置, 5=抛弃
+// Tabs: 1=想看, 2=看过, 3=在看
 const tabs = [
   { id: 1, label: '想看' },
   { id: 3, label: '在看' },
-  { id: 2, label: '看过' }
+  { id: 2, label: '看过' },
+  { id: 'subscribed' as const, label: '已订阅' }
 ];
-
 
 const fetchSubscriptions = async () => {
   try {
     const res = await getSubscriptions();
-    subscribedIds.value = res.data?.map((s: any) => Number(s.bangumiId)).filter(Boolean) || [];
+    subscribedIds.value = (res.data || []).map((s: any) => Number(s.bangumiId)).filter(Boolean);
   } catch (error) {
     console.error("Error fetching subscriptions", error);
   }
@@ -68,8 +76,27 @@ const fetchCollections = async () => {
 
   loading.value = true;
   try {
-    const res = await getBangumiCollections(activeTab.value);
-    collections.value = res.data || [];
+    if (activeTab.value === 'subscribed') {
+      // Load all collections with higher limit for client-side filtering
+      const res = await getBangumiCollections(undefined, 0, 100);
+      const allItems: any[] = res.data?.data || res.data || [];
+      collections.value = allItems.filter((item: any) =>
+        subscribedIds.value.includes(Number(item.subject?.id))
+      );
+      total.value = collections.value.length;
+    } else {
+      const offset = (currentPage.value - 1) * pageSize;
+      const res = await getBangumiCollections(activeTab.value, offset, pageSize);
+      const payload = res.data;
+      if (payload && typeof payload === 'object' && 'data' in payload) {
+        collections.value = payload.data || [];
+        total.value = payload.total || 0;
+      } else {
+        // Fallback for old format
+        collections.value = Array.isArray(payload) ? payload : [];
+        total.value = collections.value.length;
+      }
+    }
   } catch (error) {
     console.error("Error fetching collections", error);
   } finally {
@@ -82,10 +109,32 @@ onMounted(async () => {
   fetchData();
 });
 
-const handleTabChange = (id: number) => {
+const handleTabChange = (id: number | 'subscribed') => {
   activeTab.value = id;
+  currentPage.value = 1;
   fetchData();
 };
+
+const goToPage = (page: number) => {
+  if (page < 1 || page > totalPages.value || page === currentPage.value) return;
+  currentPage.value = page;
+  fetchCollections();
+};
+
+// Generate page numbers with ellipsis
+const pageNumbers = computed(() => {
+  const total = totalPages.value;
+  const current = currentPage.value;
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const pages: (number | '...')[] = [1];
+  if (current > 3) pages.push('...');
+  for (let i = Math.max(2, current - 1); i <= Math.min(total - 1, current + 1); i++) {
+    pages.push(i);
+  }
+  if (current < total - 2) pages.push('...');
+  pages.push(total);
+  return pages;
+});
 
 const navigateToSettings = () => {
   router.push('/settings');
@@ -127,7 +176,7 @@ const navigateToSettings = () => {
 
       <!-- Loaded Empty State -->
       <div v-if="!loading && collections.length === 0" class="py-20 text-center">
-        <n-empty description="空空如也，暂无数据" />
+        <n-empty :description="activeTab === 'subscribed' ? '还没有订阅任何番剧，从番剧详情页添加订阅吧' : '空空如也，暂无数据'" />
       </div>
 
       <!-- Grid Container -->
@@ -156,6 +205,54 @@ const navigateToSettings = () => {
             class="cursor-pointer"
           />
         </template>
+      </div>
+
+      <!-- Pagination (Firefly style) -->
+      <div v-if="showPagination && !loading" class="flex items-center justify-center gap-1 pt-4">
+        <!-- Prev -->
+        <button
+          :disabled="currentPage === 1"
+          @click="goToPage(currentPage - 1)"
+          class="inline-flex items-center justify-center w-9 h-9 rounded-lg text-sm font-medium transition-colors
+            disabled:opacity-40 disabled:cursor-not-allowed
+            text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          aria-label="上一页"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+
+        <!-- Page numbers -->
+        <template v-for="(page, idx) in pageNumbers" :key="idx">
+          <span v-if="page === '...'" class="inline-flex items-center justify-center w-9 h-9 text-sm text-zinc-400 dark:text-zinc-500 select-none">…</span>
+          <button
+            v-else
+            @click="goToPage(page as number)"
+            class="inline-flex items-center justify-center w-9 h-9 rounded-lg text-sm font-medium transition-colors"
+            :class="[
+              currentPage === page
+                ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-600/30'
+                : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+            ]"
+          >
+            {{ page }}
+          </button>
+        </template>
+
+        <!-- Next -->
+        <button
+          :disabled="currentPage === totalPages"
+          @click="goToPage(currentPage + 1)"
+          class="inline-flex items-center justify-center w-9 h-9 rounded-lg text-sm font-medium transition-colors
+            disabled:opacity-40 disabled:cursor-not-allowed
+            text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          aria-label="下一页"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
       </div>
 
       <!-- Detail Drawer -->
