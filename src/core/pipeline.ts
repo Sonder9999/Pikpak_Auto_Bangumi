@@ -78,7 +78,7 @@ export async function initCore(configPath?: string): Promise<boolean> {
 
   const authenticated = await client.authenticate(
     config.pikpak.username || undefined,
-    config.pikpak.password || undefined
+    config.pikpak.password || undefined,
   );
 
   if (!authenticated) {
@@ -115,7 +115,7 @@ async function resolveParentFolderId(client: PikPakClient, item: StoredRssItem, 
   if (config.rename.method === "advance") {
     let resolvedByBangumi = false;
 
-    if (source?.bangumiSubjectId) {
+    if (source?.bangumiSubjectId !== null && source?.bangumiSubjectId !== undefined) {
       const subject = await getSubject(source.bangumiSubjectId);
       const bangumiTitle = subject?.nameCn?.trim() || subject?.name?.trim() || null;
 
@@ -131,6 +131,11 @@ async function resolveParentFolderId(client: PikPakClient, item: StoredRssItem, 
           year,
         });
       }
+    } else if (source?.mikanBangumiId) {
+      logger.debug("Skipping Bangumi metadata lookup because source only has Mikan identity", {
+        sourceId: item.sourceId,
+        mikanBangumiId: source.mikanBangumiId,
+      });
     }
 
     if (!resolvedByBangumi) {
@@ -177,6 +182,7 @@ async function buildEpisodePreflightPlan(
     const source = getSourceById(item.sourceId);
     const renameInfo = await buildRenamedName(item.title, {
       bangumiSubjectId: source?.bangumiSubjectId ?? null,
+      mikanBangumiId: source?.mikanBangumiId ?? null,
     });
 
     if (renameInfo) {

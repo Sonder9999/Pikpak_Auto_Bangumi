@@ -11,6 +11,7 @@ export interface RssSource {
   enabled: boolean;
   pollIntervalMs: number;
   bangumiSubjectId: number | null;
+  mikanBangumiId: number | null;
   lastSuccessAt: string | null;
   lastErrorAt: string | null;
   lastError: string | null;
@@ -25,6 +26,7 @@ export interface CreateRssSourceInput {
   enabled?: boolean;
   pollIntervalMs?: number;
   bangumiSubjectId?: number | null;
+  mikanBangumiId?: number | null;
 }
 
 export interface UpdateRssSourceInput {
@@ -33,6 +35,7 @@ export interface UpdateRssSourceInput {
   enabled?: boolean;
   pollIntervalMs?: number;
   bangumiSubjectId?: number | null;
+  mikanBangumiId?: number | null;
 }
 
 export function getAllSources(): RssSource[] {
@@ -81,6 +84,7 @@ export function createSource(input: CreateRssSourceInput): RssSource {
       enabled: input.enabled ?? true,
       pollIntervalMs: input.pollIntervalMs ?? 300000,
       bangumiSubjectId: input.bangumiSubjectId ?? null,
+      mikanBangumiId: input.mikanBangumiId ?? null,
       createdAt: now,
       updatedAt: now,
     })
@@ -104,6 +108,7 @@ export function updateSource(id: number, input: UpdateRssSourceInput): RssSource
       ...(input.enabled !== undefined && { enabled: input.enabled }),
       ...(input.pollIntervalMs !== undefined && { pollIntervalMs: input.pollIntervalMs }),
       ...(input.bangumiSubjectId !== undefined && { bangumiSubjectId: input.bangumiSubjectId }),
+      ...(input.mikanBangumiId !== undefined && { mikanBangumiId: input.mikanBangumiId }),
       updatedAt: new Date().toISOString(),
     })
     .where(eq(schema.rssSources.id, id))

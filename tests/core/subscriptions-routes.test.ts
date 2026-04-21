@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { readFileSync } from "fs";
 import { sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { closeDb, getDb } from "../../src/core/db/connection.ts";
@@ -14,8 +15,26 @@ const EMPTY_RSS_XML = `<?xml version="1.0" encoding="UTF-8"?>
     <title>Test Feed</title>
   </channel>
 </rss>`;
+const bangumiFixture = readFileSync("tests/fixtures/mikan-bangumi.fixture.html", "utf-8");
 
 let originalFetch: typeof globalThis.fetch;
+
+function buildFetchMock() {
+  return mock((input: RequestInfo | URL) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.includes("/Home/Bangumi/3928")) {
+      return Promise.resolve(new Response(bangumiFixture, {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      }));
+    }
+
+    return Promise.resolve(new Response(EMPTY_RSS_XML, {
+      status: 200,
+      headers: { "Content-Type": "application/rss+xml" },
+    }));
+  });
+}
 
 function initTestDb() {
   const db = getDb(TEST_DB);
@@ -27,6 +46,7 @@ function initTestDb() {
     enabled INTEGER NOT NULL DEFAULT 1,
     poll_interval_ms INTEGER NOT NULL DEFAULT 300000,
     bangumi_subject_id INTEGER,
+    mikan_bangumi_id INTEGER,
     last_success_at TEXT,
     last_error_at TEXT,
     last_error TEXT,
@@ -84,12 +104,7 @@ describe("Subscriptions routes", function () {
     closeDb();
     initTestDb();
     originalFetch = globalThis.fetch;
-    globalThis.fetch = mock(() =>
-      Promise.resolve(new Response(EMPTY_RSS_XML, {
-        status: 200,
-        headers: { "Content-Type": "application/rss+xml" },
-      }))
-    );
+    globalThis.fetch = buildFetchMock();
   });
 
   afterEach(function () {
@@ -102,8 +117,8 @@ describe("Subscriptions routes", function () {
   test("POST /api/subscriptions creates manual RSS source and rules", async function () {
     const app = new Elysia().use(subscriptionsRoutes);
     const response = await postSubscription(app, {
-      bangumiId: 3928,
-      mikanId: null,
+      bangumiSubjectId: 576351,
+      mikanBangumiId: null,
       rssUrl: "https://example.com/manual.xml",
       regexInclude: "1080p",
       regexExclude: "720p",
@@ -112,11 +127,12 @@ describe("Subscriptions routes", function () {
 
     expect(response.status).toBe(200);
     expect(data.updated).toBe(false);
-    expect(data.source.name).toBe("Manual RSS - 3928");
+    expect(data.source.name).toBe("Manual RSS - 576351");
 
     const sources = getAllSources();
     expect(sources.length).toBe(1);
-    expect(sources[0]?.bangumiSubjectId).toBe(3928);
+    expect(sources[0]?.bangumiSubjectId).toBe(576351);
+    expect(sources[0]?.mikanBangumiId).toBeNull();
     expect(findRulePattern(data.source.id, "include")).toBe("1080p");
     expect(findRulePattern(data.source.id, "exclude")).toBe("720p");
   });
@@ -125,8 +141,8 @@ describe("Subscriptions routes", function () {
     const app = new Elysia().use(subscriptionsRoutes);
 
     const createResponse = await postSubscription(app, {
-      bangumiId: 3928,
-      mikanId: null,
+      bangumiSubjectId: 576351,
+      mikanBangumiId: null,
       rssUrl: "https://example.com/manual.xml",
       regexInclude: "1080p",
       regexExclude: "720p",
@@ -134,8 +150,8 @@ describe("Subscriptions routes", function () {
     const created = await createResponse.json();
 
     const updateResponse = await postSubscription(app, {
-      bangumiId: 3928,
-      mikanId: null,
+      bangumiSubjectId: 576351,
+      mikanBangumiId: null,
       sourceId: created.source.id,
       rssUrl: "https://example.com/manual-updated.xml",
       regexInclude: "2160p",
@@ -155,6 +171,94 @@ describe("Subscriptions routes", function () {
     expect(rules[0]?.pattern).toBe("2160p");
   });
 
+  test("POST /api/subscriptions resolves Mikan identity and deduplicates by RSS URL", async function () {
+    const app = new Elysia().use(subscriptionsRoutes);
+    const rssUrl = "https://mikanani.me/RSS/Bangumi?bangumiId=3928&subgroupid=370";
+
+    const createResponse = await postSubscription(app, {
+      bangumiSubjectId: 576351,
+      mikanBangumiId: 3928,
+      subgroupName: "LoliHouse",
+      rssUrl,
+      regexInclude: "1080p",
+    });
+    const created = await createResponse.json();
+
+    expect(createResponse.status).toBe(200);
+    expect(created.updated).toBe(false);
+    expect(created.source.name).toBe("LoliHouse - 3928");
+    expect(created.source.bangumiSubjectId).toBe(576351);
+    expect(created.source.mikanBangumiId).toBe(3928);
+
+    const updateResponse = await postSubscription(app, {
+      bangumiSubjectId: 576351,
+      mikanBangumiId: 3928,
+      subgroupName: "LoliHouse",
+      rssUrl,
+      regexInclude: "2160p",
+    });
+    const updated = await updateResponse.json();
+
+    expect(updateResponse.status).toBe(200);
+    expect(updated.updated).toBe(true);
+
+    const sources = getAllSources();
+    expect(sources.length).toBe(1);
+    expect(sources[0]?.id).toBe(created.source.id);
+    expect(sources[0]?.url).toBe(rssUrl);
+    expect(sources[0]?.bangumiSubjectId).toBe(576351);
+    expect(sources[0]?.mikanBangumiId).toBe(3928);
+    expect(findRulePattern(created.source.id, "include")).toBe("2160p");
+  });
+
+  test("POST /api/subscriptions updates an existing Mikan source by sourceId without dropping mikanBangumiId", async function () {
+    const app = new Elysia().use(subscriptionsRoutes);
+    const rssUrl = "https://mikanani.me/RSS/Bangumi?bangumiId=3928&subgroupid=370";
+
+    const createResponse = await postSubscription(app, {
+      bangumiSubjectId: 576351,
+      mikanBangumiId: 3928,
+      subgroupName: "LoliHouse",
+      rssUrl,
+      regexInclude: "1080p",
+    });
+    const created = await createResponse.json();
+
+    const updateResponse = await postSubscription(app, {
+      sourceId: created.source.id,
+      bangumiSubjectId: 576351,
+      mikanBangumiId: 3928,
+      subgroupName: "LoliHouse",
+      rssUrl,
+      regexInclude: "2160p",
+    });
+    const updated = await updateResponse.json();
+
+    expect(updateResponse.status).toBe(200);
+    expect(updated.updated).toBe(true);
+    expect(updated.source.mikanBangumiId).toBe(3928);
+
+    const sources = getAllSources();
+    expect(sources).toHaveLength(1);
+    expect(sources[0]?.id).toBe(created.source.id);
+    expect(sources[0]?.mikanBangumiId).toBe(3928);
+    expect(findRulePattern(created.source.id, "include")).toBe("2160p");
+  });
+
+  test("POST /api/subscriptions rejects conflicting Bangumi subject identity for Mikan sources", async function () {
+    const app = new Elysia().use(subscriptionsRoutes);
+    const response = await postSubscription(app, {
+      bangumiSubjectId: 999999,
+      mikanBangumiId: 3928,
+      subgroupName: "LoliHouse",
+      rssUrl: "https://mikanani.me/RSS/Bangumi?bangumiId=3928&subgroupid=370",
+    });
+    const data = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(data.error).toContain("Bangumi subject id mismatch");
+  });
+
   test("POST /api/subscriptions refreshes the running scheduler for new sources", async function () {
     const app = new Elysia().use(subscriptionsRoutes);
     globalThis.fetch = mock(() =>
@@ -168,8 +272,8 @@ describe("Subscriptions routes", function () {
     startScheduler();
 
     const response = await postSubscription(app, {
-      bangumiId: 576351,
-      mikanId: null,
+      bangumiSubjectId: 576351,
+      mikanBangumiId: null,
       rssUrl: "https://example.com/new-feed.xml",
     });
 

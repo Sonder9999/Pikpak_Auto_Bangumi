@@ -10,12 +10,15 @@ import { rawParser } from "../../core/parser/raw-parser.ts";
 import { requeueSourceItemsForReplay } from "../../core/rss/item-store.ts";
 import { replayStoredItems } from "../../core/pipeline.ts";
 import { getPikPakClient } from "../../core/pikpak/client.ts";
+import { parseMikanBangumiIdFromRssUrl, resolveMikanBangumiIdentity } from "../../core/mikan/index.ts";
 
 const logger = createLogger("api-subscriptions");
 
 type SubscriptionBody = {
-  bangumiId: number;
-  mikanId?: string | null;
+  bangumiSubjectId?: number | null;
+  mikanBangumiId?: number | string | null;
+  bangumiId?: number | null;
+  mikanId?: number | string | null;
   subgroupName?: string;
   rssUrl: string;
   regexInclude?: string;
@@ -24,18 +27,108 @@ type SubscriptionBody = {
   sourceId?: number;
 };
 
-function buildSourceName(body: SubscriptionBody): string {
-  if (body.subgroupName && body.mikanId) {
-    return `${body.subgroupName} - ${body.mikanId}`;
-  }
+type NormalizedSubscriptionBody = {
+  bangumiSubjectId: number;
+  mikanBangumiId: number | null;
+  subgroupName?: string;
+  rssUrl: string;
+  regexInclude?: string;
+  regexExclude?: string;
+  episodeOffset?: number;
+  sourceId?: number;
+};
 
-  return `Manual RSS - ${body.bangumiId}`;
+class SubscriptionValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SubscriptionValidationError";
+  }
 }
 
-function findExistingManualSource(bangumiId: number): RssSource | undefined {
+function parseOptionalNumber(value: unknown, fieldName: string): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const parsedValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isInteger(parsedValue) || parsedValue <= 0) {
+    throw new SubscriptionValidationError(`${fieldName} must be a positive integer`);
+  }
+
+  return parsedValue;
+}
+
+function buildSourceName(body: NormalizedSubscriptionBody): string {
+  if (body.subgroupName && body.mikanBangumiId !== null) {
+    return `${body.subgroupName} - ${body.mikanBangumiId}`;
+  }
+
+  return `Manual RSS - ${body.bangumiSubjectId}`;
+}
+
+function findExistingManualSource(bangumiSubjectId: number): RssSource | undefined {
   return getAllSources().find((source) => {
-    return source.bangumiSubjectId === bangumiId && source.name.startsWith("Manual RSS -");
+    return source.bangumiSubjectId === bangumiSubjectId && source.name.startsWith("Manual RSS -");
   });
+}
+
+function findExistingMikanSource(rssUrl: string): RssSource | undefined {
+  return getAllSources().find((source) => source.url === rssUrl);
+}
+
+async function normalizeSubscriptionBody(body: SubscriptionBody): Promise<NormalizedSubscriptionBody> {
+  const bangumiSubjectId = parseOptionalNumber(body.bangumiSubjectId ?? body.bangumiId, "bangumiSubjectId");
+  const explicitMikanBangumiId = parseOptionalNumber(body.mikanBangumiId, "mikanBangumiId");
+  const legacyMikanBangumiId = parseOptionalNumber(body.mikanId, "mikanId");
+  const rssMikanBangumiId = parseMikanBangumiIdFromRssUrl(body.rssUrl);
+  const requestedMikanBangumiId = explicitMikanBangumiId ?? legacyMikanBangumiId;
+  const hasMikanIdentity = requestedMikanBangumiId !== null || rssMikanBangumiId !== null;
+
+  if (body.bangumiId !== undefined) {
+    logger.warn("Legacy subscription field used", { field: "bangumiId" });
+  }
+
+  if (body.mikanId !== undefined) {
+    logger.warn("Legacy subscription field used", { field: "mikanId" });
+  }
+
+  if (hasMikanIdentity) {
+    try {
+      const resolvedIdentity = await resolveMikanBangumiIdentity({
+        rssUrl: body.rssUrl,
+        mikanBangumiId: requestedMikanBangumiId,
+        bangumiSubjectId: bangumiSubjectId ?? undefined,
+      });
+
+      return {
+        bangumiSubjectId: resolvedIdentity.bangumiSubjectId,
+        mikanBangumiId: resolvedIdentity.mikanBangumiId,
+        subgroupName: body.subgroupName,
+        rssUrl: body.rssUrl,
+        regexInclude: body.regexInclude,
+        regexExclude: body.regexExclude,
+        episodeOffset: body.episodeOffset,
+        sourceId: body.sourceId,
+      };
+    } catch (error) {
+      throw new SubscriptionValidationError(error instanceof Error ? error.message : "Failed to resolve Mikan identity");
+    }
+  }
+
+  if (bangumiSubjectId === null) {
+    throw new SubscriptionValidationError("bangumiSubjectId is required");
+  }
+
+  return {
+    bangumiSubjectId,
+    mikanBangumiId: null,
+    subgroupName: body.subgroupName,
+    rssUrl: body.rssUrl,
+    regexInclude: body.regexInclude,
+    regexExclude: body.regexExclude,
+    episodeOffset: body.episodeOffset,
+    sourceId: body.sourceId,
+  };
 }
 
 function syncRule(sourceId: number, mode: "include" | "exclude", pattern: string | undefined, sourceName: string): void {
@@ -65,36 +158,55 @@ function syncRule(sourceId: number, mode: "include" | "exclude", pattern: string
 
 export const subscriptionsRoutes = new Elysia({ prefix: "/api/subscriptions" })
   .post("/", async ({ body }) => {
-    const sourceName = buildSourceName(body);
-    logger.info("Creating new subscription from frontend", {
-      bangumiId: body.bangumiId,
-      mikanId: body.mikanId,
-      subgroupName: body.subgroupName,
-      sourceId: body.sourceId,
-      sourceName,
-    });
-
     try {
-      let source = body.sourceId
-        ? updateSource(body.sourceId, {
+      const normalizedBody = await normalizeSubscriptionBody(body);
+      const sourceName = buildSourceName(normalizedBody);
+
+      logger.info("Creating new subscription from frontend", {
+        bangumiSubjectId: normalizedBody.bangumiSubjectId,
+        mikanBangumiId: normalizedBody.mikanBangumiId,
+        subgroupName: normalizedBody.subgroupName,
+        sourceId: normalizedBody.sourceId,
+        sourceName,
+      });
+
+      let source = normalizedBody.sourceId
+        ? updateSource(normalizedBody.sourceId, {
             name: sourceName,
-            url: body.rssUrl,
+            url: normalizedBody.rssUrl,
             enabled: true,
             pollIntervalMs: 300000,
-            bangumiSubjectId: body.bangumiId,
+            bangumiSubjectId: normalizedBody.bangumiSubjectId,
+            mikanBangumiId: normalizedBody.mikanBangumiId,
           })
         : undefined;
 
       let updated = Boolean(source);
-      if (!source && !body.mikanId) {
-        const existingManualSource = findExistingManualSource(body.bangumiId);
+      if (!source && normalizedBody.mikanBangumiId === null) {
+        const existingManualSource = findExistingManualSource(normalizedBody.bangumiSubjectId);
         if (existingManualSource) {
           source = updateSource(existingManualSource.id, {
             name: sourceName,
-            url: body.rssUrl,
+            url: normalizedBody.rssUrl,
             enabled: true,
             pollIntervalMs: 300000,
-            bangumiSubjectId: body.bangumiId,
+            bangumiSubjectId: normalizedBody.bangumiSubjectId,
+            mikanBangumiId: null,
+          });
+          updated = Boolean(source);
+        }
+      }
+
+      if (!source && normalizedBody.mikanBangumiId !== null) {
+        const existingMikanSource = findExistingMikanSource(normalizedBody.rssUrl);
+        if (existingMikanSource) {
+          source = updateSource(existingMikanSource.id, {
+            name: sourceName,
+            url: normalizedBody.rssUrl,
+            enabled: true,
+            pollIntervalMs: 300000,
+            bangumiSubjectId: normalizedBody.bangumiSubjectId,
+            mikanBangumiId: normalizedBody.mikanBangumiId,
           });
           updated = Boolean(source);
         }
@@ -103,15 +215,16 @@ export const subscriptionsRoutes = new Elysia({ prefix: "/api/subscriptions" })
       if (!source) {
         source = createSource({
           name: sourceName,
-          url: body.rssUrl,
+          url: normalizedBody.rssUrl,
           enabled: true,
           pollIntervalMs: 300000,
-          bangumiSubjectId: body.bangumiId,
+          bangumiSubjectId: normalizedBody.bangumiSubjectId,
+          mikanBangumiId: normalizedBody.mikanBangumiId,
         });
       }
 
-      syncRule(source.id, "include", body.regexInclude, sourceName);
-      syncRule(source.id, "exclude", body.regexExclude, sourceName);
+      syncRule(source.id, "include", normalizedBody.regexInclude, sourceName);
+      syncRule(source.id, "exclude", normalizedBody.regexExclude, sourceName);
       const requeued = requeueSourceItemsForReplay(source.id, { reason: "subscription-updated" });
       refreshScheduler();
 
@@ -126,13 +239,20 @@ export const subscriptionsRoutes = new Elysia({ prefix: "/api/subscriptions" })
 
       return { success: true, updated, source };
     } catch (e) {
+      if (e instanceof SubscriptionValidationError) {
+        logger.warn("Rejected invalid subscription payload", { error: e.message });
+        return new Response(JSON.stringify({ error: e.message }), { status: 400 });
+      }
+
       logger.error("Failed to create subscription", { error: String(e) });
       return new Response(JSON.stringify({ error: "Failed to create subscription" }), { status: 500 });
     }
   }, {
     body: t.Object({
-      bangumiId: t.Number(),
-      mikanId: t.Optional(t.Union([t.String(), t.Null()])),
+      bangumiSubjectId: t.Optional(t.Union([t.Number(), t.Null()])),
+      mikanBangumiId: t.Optional(t.Union([t.Number(), t.String(), t.Null()])),
+      bangumiId: t.Optional(t.Union([t.Number(), t.Null()])),
+      mikanId: t.Optional(t.Union([t.Number(), t.String(), t.Null()])),
       subgroupName: t.Optional(t.String()),
       sourceId: t.Optional(t.Number()),
       rssUrl: t.String(),

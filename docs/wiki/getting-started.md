@@ -82,7 +82,17 @@ bun run dev:frontend
 bun run start:cli
 ```
 
-直接在终端运行，适合简单场景或调试。
+直接在终端运行后台进程，适合简单场景或调试。
+
+#### 导入 qBittorrent 规则
+
+支持将 qBittorrent 的 RSS 规则（`.json` 格式）批量导入到系统中，自动建立规则或忽略重复：
+
+```bash
+bun run src/index.ts --mode cli import-qbit-rss-rules "/path/to/qbit1.json" "/path/to/qbit2.json"
+```
+
+此命令可指定一个或多个 JSON 文件路径，系统会识别、清理过期规则并批量导入。
 
 ## 通过网页界面订阅番剧
 

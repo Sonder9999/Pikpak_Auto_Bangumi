@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { existsSync, rmSync, mkdirSync } from "fs";
 import { eq, sql } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { initBangumi } from "../../src/core/bangumi/client.ts";
 import { loadConfig, updateConfig } from "../../src/core/config/config.ts";
 import { getDb, closeDb } from "../../src/core/db/connection.ts";
 import { createSource } from "../../src/core/rss/source-crud.ts";
@@ -10,6 +11,7 @@ import { createRule } from "../../src/core/filter/rule-crud.ts";
 import { createTaskRecord, getTasksByStatus, updateTaskStatus } from "../../src/core/pikpak/task-manager.ts";
 
 const TEST_CONFIG_PATH = "data/test-pipeline-replay-config.json";
+const originalFetch = globalThis.fetch;
 
 const episodeDeliveryStateTable = sqliteTable("episode_delivery_state", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -38,6 +40,7 @@ function initTestDb() {
     enabled INTEGER NOT NULL DEFAULT 1,
     poll_interval_ms INTEGER NOT NULL DEFAULT 300000,
     bangumi_subject_id INTEGER,
+    mikan_bangumi_id INTEGER,
     last_success_at TEXT, last_error_at TEXT, last_error TEXT,
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -131,11 +134,14 @@ beforeEach(() => {
     rename: { enabled: false, method: "none" },
     dandanplay: { enabled: false },
   });
+  initBangumi("");
+  globalThis.fetch = originalFetch;
 });
 
 afterEach(() => {
   closeDb();
   if (existsSync(TEST_CONFIG_PATH)) rmSync(TEST_CONFIG_PATH);
+  globalThis.fetch = originalFetch;
   mock.restore();
 });
 
@@ -382,5 +388,54 @@ describe("Pipeline replay regression coverage", () => {
       .where(eq(episodeDeliveryStateTable.normalizedTitle, "seedanime"))
       .get();
     expect(seeded).toMatchObject({ normalizedTitle: "seedanime", seasonNumber: 1, episodeNumber: 1, videoStatus: "delivered" });
+  });
+
+  test("replay does not query Bangumi when a source only has Mikan identity", async () => {
+    updateConfig({
+      bangumi: { token: "bangumi-token" },
+      rename: {
+        enabled: true,
+        method: "advance",
+        template: "{title} S{season}E{episode}.{ext}",
+        folderPattern: "{title}/Season {season}",
+      },
+    });
+    initBangumi("bangumi-token");
+
+    globalThis.fetch = mock(() => {
+      throw new Error("Bangumi subject lookup should be skipped for Mikan-only sources");
+    }) as typeof fetch;
+
+    const source = createSource({
+      name: "Mikan Only Feed",
+      url: "https://mikanani.me/RSS/Bangumi?bangumiId=3928&subgroupid=370",
+      mikanBangumiId: 3928,
+      bangumiSubjectId: null,
+    });
+    createRule({ name: "Match mikan only", pattern: "Kuroneko", mode: "include", sourceId: source.id });
+
+    storeNewItems(source.id, [
+      {
+        title: "[LoliHouse] Kuroneko to Majo no Kyoushitsu - 01 [1080p].mkv",
+        guid: "mikan-only-guid-01",
+        link: "https://example.com/mikan-only-01",
+        magnetUrl: "magnet:?xt=urn:btih:mikanonly01",
+        torrentUrl: null,
+        homepage: null,
+      },
+    ]);
+
+    const pipelineModule = await import("../../src/core/pipeline.ts") as Record<string, any>;
+    const replayStoredItems = pipelineModule.replayStoredItems;
+
+    expect(typeof replayStoredItems).toBe("function");
+    if (typeof replayStoredItems !== "function") return;
+
+    const pikpak = createMockPikPakClient();
+    const result = await replayStoredItems(pikpak, { sourceId: source.id, trigger: "startup" });
+
+    expect(result.submitted).toBe(1);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(pikpak.offlineDownload).toHaveBeenCalledTimes(1);
   });
 });

@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { NDrawer, NDrawerContent, NButton, NIcon, NSpin, NEmpty, NTag, NInput, NCollapse, NCollapseItem, useMessage } from 'naive-ui'
 import { OpenOutline, SearchOutline, CheckmarkCircleOutline, ListOutline } from '@vicons/ionicons5'
 import { searchMikan, getMikanBangumi, getSubscriptions, getRules } from '../api'
+import { buildManualSubscriptionPayload, buildMikanSubscriptionPayload } from '../subscription-helpers'
 import AdvancedSubscriptionOptions from './AdvancedSubscriptionOptions.vue'
 import ManualRssSubscriptionPanel from './ManualRssSubscriptionPanel.vue'
 interface BangumiItem {
@@ -43,6 +44,7 @@ interface MikanSubgroupPayload {
   latestUpdatedAt?: string
 }
 interface MikanBangumiResponse {
+  bangumiSubjectId?: number | null
   subgroups?: MikanSubgroupPayload[]
 }
 interface SubscriptionSource {
@@ -172,14 +174,13 @@ const saveManualRss = async () => {
   const normalizedUrl = manualRssUrl.value.trim()
   savingManualRss.value = true
   try {
-    const payload = {
-      bangumiId: props.bangumi.id,
-      mikanId: null,
-      sourceId: existingManualSourceId.value || undefined,
+    const payload = buildManualSubscriptionPayload({
+      bangumiSubjectId: props.bangumi.id,
+      sourceId: existingManualSourceId.value,
       rssUrl: normalizedUrl,
-      regexInclude: manualRssInclude.value || undefined,
-      regexExclude: manualRssExclude.value || undefined,
-    }
+      regexInclude: manualRssInclude.value,
+      regexExclude: manualRssExclude.value,
+    })
     const res = await fetch('/api/subscriptions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -300,19 +301,23 @@ const selectMikanBangumi = async (mikanId: string | number) => {
 const subscribe = async () => {
   const bangumi = props.bangumi
   if (!bangumi || !selectedSubgroup.value || !selectedMikanId.value) return
+
+  const mikanBangumiId = Number(selectedMikanId.value)
+  if (!Number.isInteger(mikanBangumiId) || mikanBangumiId <= 0) return
+
   try {
     const targetSubgroup = subtitleGroups.value.find((s) => s.name === selectedSubgroup.value)
     const rssUrl = targetSubgroup?.rssUrl || ''
 
-    const payload = {
-      bangumiId: bangumi.id,
-      mikanId: selectedMikanId.value,
+    const payload = buildMikanSubscriptionPayload({
+      bangumiSubjectId: bangumi.id,
+      mikanBangumiId,
       subgroupName: selectedSubgroup.value,
       rssUrl,
       regexInclude: regexInclude.value,
       regexExclude: regexExclude.value,
       episodeOffset: parseInt(episodeOffset.value, 10) || 0
-    }
+    })
 
     // Call /api/subscriptions
     const res = await fetch('/api/subscriptions', {

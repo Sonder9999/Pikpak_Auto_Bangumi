@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
 import { getBangumiCollections, getConfig, getSubscriptions } from "../api";
+import { extractSubscribedBangumiSubjectIds } from "../subscription-helpers";
 import BangumiCard from "./BangumiCard.vue";
 import { NSkeleton, NEmpty, NButton } from "naive-ui";
 import { useRouter } from "vue-router";
@@ -8,7 +9,6 @@ import { useRouter } from "vue-router";
 const router = useRouter();
 
 interface SubscriptionSource {
-  bangumiId?: number | null;
   bangumiSubjectId?: number | null;
 }
 
@@ -51,9 +51,7 @@ const tabs = [
 const fetchSubscriptions = async () => {
   try {
     const res = await getSubscriptions();
-    subscribedIds.value = (res.data || [])
-      .map((source: SubscriptionSource) => Number(source.bangumiSubjectId ?? source.bangumiId))
-      .filter(Boolean);
+    subscribedIds.value = extractSubscribedBangumiSubjectIds((res.data || []) as SubscriptionSource[]);
   } catch (error) {
     console.error("Error fetching subscriptions", error);
   }

@@ -3,6 +3,7 @@
 .github/
 .codex/
 openspec/
+.agent/
 
 # Private credentials (never commit)
 docs/*.md

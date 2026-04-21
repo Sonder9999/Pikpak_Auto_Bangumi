@@ -26,6 +26,7 @@ export type PostRenameHandler = (client: PikPakClient, result: RenameResult) => 
 
 export interface BuildRenameOptions {
   bangumiSubjectId?: number | null;
+  mikanBangumiId?: number | null;
 }
 
 let _postRenameHandler: PostRenameHandler | null = null;
@@ -79,7 +80,7 @@ export async function buildRenamedName(
   if (config.rename.method === "advance") {
     let resolvedByBangumi = false;
 
-    if (options.bangumiSubjectId) {
+    if (options.bangumiSubjectId !== null && options.bangumiSubjectId !== undefined) {
       const subject = await getSubject(options.bangumiSubjectId);
       const bangumiTitle = subject?.nameCn?.trim() || subject?.name?.trim() || null;
 
@@ -95,6 +96,10 @@ export async function buildRenamedName(
           year: subject.year,
         });
       }
+    } else if (options.mikanBangumiId) {
+      logger.debug("Skipping Bangumi metadata lookup for rename because only Mikan identity is available", {
+        mikanBangumiId: options.mikanBangumiId,
+      });
     }
 
     if (!resolvedByBangumi) {
@@ -169,6 +174,7 @@ export async function processRenames(client: PikPakClient): Promise<number> {
     const source = task.rssItemId ? getSourceByRssItemId(task.rssItemId) : undefined;
     const renameInfo = await buildRenamedName(originalName, {
       bangumiSubjectId: source?.bangumiSubjectId ?? null,
+      mikanBangumiId: source?.mikanBangumiId ?? null,
     });
     if (!renameInfo) {
       logger.warn("Could not build rename target", { taskId: task.id, originalName });

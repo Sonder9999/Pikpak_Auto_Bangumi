@@ -8,6 +8,7 @@ export const rssSources = sqliteTable("rss_sources", {
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   pollIntervalMs: integer("poll_interval_ms").notNull().default(300000),
   bangumiSubjectId: integer("bangumi_subject_id"),
+  mikanBangumiId: integer("mikan_bangumi_id"),
   lastSuccessAt: text("last_success_at"),
   lastErrorAt: text("last_error_at"),
   lastError: text("last_error"),

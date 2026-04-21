@@ -15,6 +15,8 @@
 | `pollIntervalMs` | INTEGER | 轮询间隔（毫秒） |
 | `lastPolledAt` | TEXT | 最后一次成功轮询时间 |
 | `consecutiveFailures` | INTEGER | 连续失败次数 |
+| `bangumiSubjectId` | INTEGER \| NULL | Bangumi 条目 ID |
+| `mikanBangumiId` | INTEGER \| NULL | Mikan 番剧 ID |
 | `createdAt` | TEXT | 创建时间 |
 
 ### `rss_items` — RSS 条目（已处理记录）

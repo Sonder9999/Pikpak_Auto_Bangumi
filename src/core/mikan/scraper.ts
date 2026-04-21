@@ -31,6 +31,7 @@ export interface MikanBangumiDetail {
   title: string;
   posterUrl: string | null;
   bangumiTvUrl: string | null;
+  bangumiSubjectId: number | null;
   mikanRssUrl: string | null;
   summary: string | null;
   subgroups: MikanSubgroup[];
@@ -56,6 +57,32 @@ function toAbsoluteMikanUrl(value: string | null | undefined): string | null {
   } catch {
     return value;
   }
+}
+
+export function parseMikanBangumiIdFromRssUrl(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const match = value.match(/[?&]bangumiId=(\d+)/i);
+  if (!match) {
+    return null;
+  }
+
+  return Number(match[1]);
+}
+
+export function parseBangumiSubjectIdFromUrl(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const match = value.match(/\/subject\/(\d+)/i);
+  if (!match) {
+    return null;
+  }
+
+  return Number(match[1]);
 }
 
 function fetchMikan(url: string): Promise<Response> {
@@ -177,11 +204,14 @@ export function parseMikanBangumiHtml(html: string, mikanId: number): MikanBangu
     })
     .filter((item): item is MikanSubgroup => item !== null);
 
+  const bangumiTvUrl = toAbsoluteMikanUrl(root.querySelector("a.w-other-c[href*='bgm.tv/subject/']")?.getAttribute("href"));
+
   return {
     mikanId,
     title: titleNode.text.trim(),
     posterUrl: parseBackgroundImage(root.querySelector("div.bangumi-poster")?.getAttribute("style")),
-    bangumiTvUrl: toAbsoluteMikanUrl(root.querySelector("a.w-other-c[href*='bgm.tv/subject/']")?.getAttribute("href")),
+    bangumiTvUrl,
+    bangumiSubjectId: parseBangumiSubjectIdFromUrl(bangumiTvUrl),
     mikanRssUrl: toAbsoluteMikanUrl(titleNode.querySelector("a.mikan-rss")?.getAttribute("href")),
     summary: root.querySelector("div.bangumi-intro")?.text.trim() || null,
     subgroups,

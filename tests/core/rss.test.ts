@@ -27,6 +27,7 @@ function initTestDb() {
     enabled INTEGER NOT NULL DEFAULT 1,
     poll_interval_ms INTEGER NOT NULL DEFAULT 300000,
     bangumi_subject_id INTEGER,
+    mikan_bangumi_id INTEGER,
     last_success_at TEXT,
     last_error_at TEXT,
     last_error TEXT,
@@ -87,12 +88,19 @@ afterEach(() => {
 
 describe("RSS source CRUD", () => {
   test("create and list sources", () => {
-    createSource({ name: "Test Feed", url: "https://example.com/rss" });
+    createSource({
+      name: "Test Feed",
+      url: "https://example.com/rss",
+      bangumiSubjectId: 576351,
+      mikanBangumiId: 3928,
+    });
     createSource({ name: "Test Feed 2", url: "https://example.com/rss2" });
 
     const all = getAllSources();
     expect(all.length).toBe(2);
     expect(all[0]!.name).toBe("Test Feed");
+    expect(all[0]!.bangumiSubjectId).toBe(576351);
+    expect(all[0]!.mikanBangumiId).toBe(3928);
   });
 
   test("get source by id", () => {
@@ -104,10 +112,17 @@ describe("RSS source CRUD", () => {
 
   test("update source", () => {
     const created = createSource({ name: "Old Name", url: "https://example.com/rss" });
-    const updated = updateSource(created.id, { name: "New Name", enabled: false });
+    const updated = updateSource(created.id, {
+      name: "New Name",
+      enabled: false,
+      bangumiSubjectId: 576351,
+      mikanBangumiId: 3928,
+    });
     expect(updated).toBeDefined();
     expect(updated!.name).toBe("New Name");
     expect(updated!.enabled).toBe(false);
+    expect(updated!.bangumiSubjectId).toBe(576351);
+    expect(updated!.mikanBangumiId).toBe(3928);
   });
 
   test("delete source", () => {

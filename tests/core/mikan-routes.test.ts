@@ -46,6 +46,7 @@ describe("Mikan routes", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(data.bangumiSubjectId).toBe(576351);
     expect(data.subgroups[0].name).toBe("LoliHouse");
     expect(data.subgroups[0].episodes).toBeArray();
     expect(data.subgroups[0].episodes[0]).toMatchObject({
