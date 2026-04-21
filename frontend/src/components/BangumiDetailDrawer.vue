@@ -1,12 +1,72 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { NDrawer, NDrawerContent, NButton, NIcon, NSpin, NEmpty, NTag, NInput, NCollapse, NCollapseItem } from 'naive-ui'
 import { OpenOutline, SearchOutline, CheckmarkCircleOutline, ListOutline } from '@vicons/ionicons5'
-import { searchMikan, getMikanBangumi } from '../api'
+import { searchMikan, getMikanBangumi, getSubscriptions, getRules } from '../api'
+
+interface BangumiItem {
+  id: number
+  name: string
+  nameCn?: string | null
+  summary?: string | null
+  short_summary?: string | null
+  date?: string | null
+  year?: string | null
+  images?: {
+    large?: string | null
+    common?: string | null
+  } | null
+  rating?: {
+    score?: number | null
+  } | null
+}
+
+interface MikanSearchResult {
+  mikanId: number
+  title?: string
+  name?: string
+  image?: string | null
+  posterUrl?: string | null
+}
+
+interface MikanEpisode {
+  title: string
+  size: string
+  updatedAt: string
+  magnet: string
+}
+
+interface MikanSubgroupPayload {
+  id: number
+  name: string
+  rssUrl: string
+  episodes?: MikanEpisode[]
+  latestEpisodeTitle?: string
+  latestUpdatedAt?: string
+}
+
+interface MikanBangumiResponse {
+  subgroups?: MikanSubgroupPayload[]
+}
+
+interface SubscriptionSource {
+  id: number
+  name: string
+  url: string
+  bangumiSubjectId?: number | null
+}
+
+interface FilterRule {
+  id: number
+  name: string
+  pattern: string
+  mode: 'include' | 'exclude'
+  sourceId?: number | null
+}
 
 const props = defineProps<{
   show: boolean
-  bangumi: any
+  bangumi: BangumiItem | null
 }>()
 
 const emit = defineEmits<{
@@ -20,13 +80,13 @@ const handleClose = () => {
 
 // Mikan Search State
 const searchQuery = ref('')
-const MikanResults = ref<any[]>([])
+const MikanResults = ref<MikanSearchResult[]>([])
 const loadingSearch = ref(false)
 const selectedMikanId = ref<string | null>(null)
 
 // Mikan Detail State
 const loadingDetail = ref(false)
-const subtitleGroups = ref<any[]>([])
+const subtitleGroups = ref<MikanSubgroupPayload[]>([])
 const selectedSubgroup = ref<string | null>(null)
 
 // Advanced config
@@ -39,18 +99,85 @@ const manualRssUrl = ref('')
 const manualRssInclude = ref('')
 const manualRssExclude = ref('')
 const savingManualRss = ref(false)
+const existingManualSourceId = ref<number | null>(null)
 
 const isValidUrl = (url: string) => {
-  return url.startsWith('http://') || url.startsWith('https://')
+  const normalizedUrl = url.trim()
+  return normalizedUrl.startsWith('http://') || normalizedUrl.startsWith('https://')
+}
+
+const manualRssButtonLabel = computed(() => {
+  return existingManualSourceId.value ? '更新订阅' : '保存订阅'
+})
+
+const normalizeMikanSubgroups = (subgroups: MikanSubgroupPayload[]) => {
+  return subgroups.map((subgroup) => {
+    if (Array.isArray(subgroup.episodes)) {
+      return subgroup
+    }
+
+    const episodes = subgroup.latestEpisodeTitle
+      ? [{
+          title: subgroup.latestEpisodeTitle,
+          size: '',
+          updatedAt: subgroup.latestUpdatedAt || '',
+          magnet: '',
+        }]
+      : []
+
+    return {
+      ...subgroup,
+      episodes,
+    }
+  })
+}
+
+const loadExistingManualSubscription = async () => {
+  if (!props.bangumi?.id) return
+
+  try {
+    const [subscriptionsRes, rulesRes] = await Promise.all([
+      getSubscriptions(),
+      getRules(),
+    ])
+
+    const subscriptions = (subscriptionsRes.data || []) as SubscriptionSource[]
+    const rules = (rulesRes.data || []) as FilterRule[]
+    const manualSource = subscriptions.find((source) => {
+      return Number(source.bangumiSubjectId) === props.bangumi?.id && source.name.startsWith('Manual RSS -')
+    })
+
+    existingManualSourceId.value = manualSource?.id ?? null
+    manualRssUrl.value = manualSource?.url || ''
+
+    if (!manualSource) {
+      manualRssInclude.value = ''
+      manualRssExclude.value = ''
+      return
+    }
+
+    const includeRule = rules.find((rule) => Number(rule.sourceId) === manualSource.id && rule.mode === 'include')
+    const excludeRule = rules.find((rule) => Number(rule.sourceId) === manualSource.id && rule.mode === 'exclude')
+
+    manualRssInclude.value = includeRule?.pattern || ''
+    manualRssExclude.value = excludeRule?.pattern || ''
+  } catch (error) {
+    existingManualSourceId.value = null
+    console.error('Failed to load existing manual RSS subscription', error)
+  }
 }
 
 const saveManualRss = async () => {
   if (!isValidUrl(manualRssUrl.value) || !props.bangumi?.id) return
+
+  const normalizedUrl = manualRssUrl.value.trim()
   savingManualRss.value = true
   try {
     const payload = {
       bangumiId: props.bangumi.id,
-      rssUrl: manualRssUrl.value,
+      mikanId: null,
+      sourceId: existingManualSourceId.value || undefined,
+      rssUrl: normalizedUrl,
       regexInclude: manualRssInclude.value || undefined,
       regexExclude: manualRssExclude.value || undefined,
     }
@@ -60,6 +187,8 @@ const saveManualRss = async () => {
       body: JSON.stringify(payload)
     })
     if (res.ok) {
+      const data = await res.json()
+      existingManualSourceId.value = Number(data?.source?.id) || existingManualSourceId.value
       emit('subscribed')
       handleClose()
     }
@@ -77,12 +206,14 @@ watch(() => props.show, (newVal) => {
     selectedMikanId.value = null
     subtitleGroups.value = []
     selectedSubgroup.value = null
+    existingManualSourceId.value = null
     manualRssUrl.value = ''
     manualRssInclude.value = ''
     manualRssExclude.value = ''
 
     // Auto trigger search
-    handleSearch()
+    void handleSearch()
+    void loadExistingManualSubscription()
   }
 })
 
@@ -104,7 +235,9 @@ const selectMikanBangumi = async (mikanId: string | number) => {
   loadingDetail.value = true
   try {
     const res = await getMikanBangumi(Number(mikanId))
-    subtitleGroups.value = res.data?.subgroups || []
+    const detail = (res.data || {}) as MikanBangumiResponse
+    subtitleGroups.value = normalizeMikanSubgroups(detail.subgroups || [])
+    selectedSubgroup.value = null
   } catch (e) {
     console.error(e)
   } finally {
@@ -113,13 +246,14 @@ const selectMikanBangumi = async (mikanId: string | number) => {
 }
 
 const subscribe = async () => {
-  if (!selectedSubgroup.value || !selectedMikanId.value) return
+  const bangumi = props.bangumi
+  if (!bangumi || !selectedSubgroup.value || !selectedMikanId.value) return
   try {
-    const targetSubgroup = subtitleGroups.value.find(s => s.name === selectedSubgroup.value)
+    const targetSubgroup = subtitleGroups.value.find((s) => s.name === selectedSubgroup.value)
     const rssUrl = targetSubgroup?.rssUrl || ''
 
     const payload = {
-      bangumiId: props.bangumi.id,
+      bangumiId: bangumi.id,
       mikanId: selectedMikanId.value,
       subgroupName: selectedSubgroup.value,
       rssUrl,
@@ -152,7 +286,7 @@ const subscribe = async () => {
         <!-- Left Side: Poster & Info -->
         <div class="lg:w-1/3 flex flex-col gap-4">
           <img
-            :src="bangumi.images?.large || bangumi.images?.common"
+            :src="bangumi.images?.large || bangumi.images?.common || undefined"
             class="w-full rounded-xl shadow-lg border border-zinc-700/50"
             alt="Poster"
           />
@@ -204,7 +338,7 @@ const subscribe = async () => {
                     :class="(selectedMikanId === r.mikanId.toString()) ? 'border-blue-500 bg-blue-500/10' : 'border-zinc-300 dark:border-zinc-700/50 bg-white dark:bg-zinc-800/80'"
                     @click="selectMikanBangumi(r.mikanId)"
                   >
-                    <img v-if="r.image || r.posterUrl" :src="r.image ? `https://mikanani.me${r.image}` : r.posterUrl" class="w-12 h-16 object-cover rounded shadow-sm" />
+                    <img v-if="r.image || r.posterUrl" :src="r.image ? `https://mikanani.me${r.image}` : r.posterUrl || undefined" class="w-12 h-16 object-cover rounded shadow-sm" />
                     <span class="text-sm font-medium text-gray-700 dark:text-gray-200 line-clamp-2 leading-tight flex-1">
                       {{ r.name || r.title }}
                     </span>
@@ -254,8 +388,8 @@ const subscribe = async () => {
                       <tbody class="divide-y divide-zinc-100 dark:divide-zinc-800">
                         <tr v-for="(ep, i) in sub.episodes" :key="i" class="hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors">
                           <td class="py-1.5 pr-2 max-w-[200px] truncate" :title="ep.title">{{ ep.title }}</td>
-                          <td class="py-1.5 text-center text-gray-500">{{ ep.size }}</td>
-                          <td class="py-1.5 text-right text-gray-500">{{ ep.updatedAt }}</td>
+                          <td class="py-1.5 text-center text-gray-500">{{ ep.size || '-' }}</td>
+                          <td class="py-1.5 text-right text-gray-500">{{ ep.updatedAt || '-' }}</td>
                         </tr>
                       </tbody>
                     </table>
@@ -327,7 +461,7 @@ const subscribe = async () => {
                   :loading="savingManualRss"
                   @click="saveManualRss"
                 >
-                  保存订阅
+                  {{ manualRssButtonLabel }}
                 </n-button>
               </div>
             </n-collapse-item>

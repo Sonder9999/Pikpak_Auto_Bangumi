@@ -6,6 +6,12 @@ import { NSkeleton, NEmpty, NButton } from "naive-ui";
 import { useRouter } from "vue-router";
 
 const router = useRouter();
+
+interface SubscriptionSource {
+  bangumiId?: number | null;
+  bangumiSubjectId?: number | null;
+}
+
 const loading = ref(true);
 const collections = ref<any[]>([]);
 const subscribedIds = ref<number[]>([]);
@@ -45,7 +51,9 @@ const tabs = [
 const fetchSubscriptions = async () => {
   try {
     const res = await getSubscriptions();
-    subscribedIds.value = (res.data || []).map((s: any) => Number(s.bangumiId)).filter(Boolean);
+    subscribedIds.value = (res.data || [])
+      .map((source: SubscriptionSource) => Number(source.bangumiSubjectId ?? source.bangumiId))
+      .filter(Boolean);
   } catch (error) {
     console.error("Error fetching subscriptions", error);
   }

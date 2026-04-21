@@ -17,7 +17,7 @@ export const searchMikan = (q: string) => {
 };
 
 export const getMikanBangumi = (id: number) => {
-  return api.get(`/mikan/bangumi/${id}`);
+  return api.get(`/mikan/bangumi-detail/${id}?ts=${Date.now()}`);
 };
 
 export const getConfig = () => {
@@ -30,4 +30,8 @@ export const updateConfig = (payload: any) => {
 
 export const getSubscriptions = () => {
   return api.get('/rss');
+};
+
+export const getRules = () => {
+  return api.get('/rules');
 };

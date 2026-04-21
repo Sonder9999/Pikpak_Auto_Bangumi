@@ -5,12 +5,12 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun run --watch src/index.ts",
+    "dev": "bun run --watch src/server/main.ts",
     "dev:frontend": "cd frontend && bun run dev",
     "build:frontend": "cd frontend && bun run build",
-    "start": "bun run src/index.ts",
+    "start": "bun run src/server/main.ts",
     "start:cli": "bun run src/index.ts --mode cli",
-    "start:server": "bun run src/index.ts --mode server",
+    "start:server": "bun run src/server/main.ts",
     "test": "bun test",
     "db:generate": "bunx drizzle-kit generate",
     "db:migrate": "bunx drizzle-kit migrate"
