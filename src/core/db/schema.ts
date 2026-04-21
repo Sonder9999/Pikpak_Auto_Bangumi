@@ -60,6 +60,26 @@ export const pikpakTasks = sqliteTable("pikpak_tasks", {
   updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 
+// Episode Delivery State
+export const episodeDeliveryState = sqliteTable("episode_delivery_state", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  normalizedTitle: text("normalized_title").notNull(),
+  seasonNumber: integer("season_number").notNull(),
+  episodeNumber: integer("episode_number").notNull(),
+  cloudPath: text("cloud_path").notNull(),
+  videoStatus: text("video_status", { enum: ["delivered", "missing"] }).notNull().default("missing"),
+  videoFileName: text("video_file_name"),
+  videoFileId: text("video_file_id"),
+  videoVerifiedAt: text("video_verified_at"),
+  danmakuStatus: text("danmaku_status", { enum: ["pending", "fresh", "missing", "error"] }).notNull().default("pending"),
+  danmakuUploadedAt: text("danmaku_uploaded_at"),
+  danmakuCheckedAt: text("danmaku_checked_at"),
+  xmlFileName: text("xml_file_name"),
+  xmlFileId: text("xml_file_id"),
+  createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at").notNull().$defaultFn(() => new Date().toISOString()),
+});
+
 // Danmaku Cache
 export const danmakuCache = sqliteTable("danmaku_cache", {
   id: integer("id").primaryKey({ autoIncrement: true }),

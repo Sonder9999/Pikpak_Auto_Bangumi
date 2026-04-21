@@ -49,6 +49,7 @@ export const DandanplayConfigSchema = z.object({
   appId: z.string().default(""),
   appSecret: z.string().default(""),
   chConvert: z.number().int().min(0).max(2).default(1),
+  refreshIntervalDays: z.number().int().min(1).default(7),
 });
 
 const DANDANPLAY_DEFAULTS: z.input<typeof DandanplayConfigSchema> = {};

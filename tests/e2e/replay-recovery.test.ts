@@ -75,18 +75,48 @@ function initTestDb() {
     xml_file_id TEXT,
     downloaded_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  db.run(sql`CREATE TABLE IF NOT EXISTS episode_delivery_state (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    normalized_title TEXT NOT NULL,
+    season_number INTEGER NOT NULL,
+    episode_number INTEGER NOT NULL,
+    cloud_path TEXT NOT NULL,
+    video_status TEXT NOT NULL DEFAULT 'missing',
+    video_file_name TEXT,
+    video_file_id TEXT,
+    video_verified_at TEXT,
+    danmaku_status TEXT NOT NULL DEFAULT 'pending',
+    danmaku_uploaded_at TEXT,
+    danmaku_checked_at TEXT,
+    xml_file_name TEXT,
+    xml_file_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
 }
 
-function createMockPikPakClient() {
+function createMockPikPakClient(filesByParent: Record<string, Array<{ id: string; name: string; kind?: string; parent_id?: string; created_time?: string; modified_time?: string }>> = {}) {
   return {
     isAuthenticated: mock(() => true),
     ensurePath: mock(() => Promise.resolve("root-folder")),
     ensureFolder: mock((_parentId: string, name: string) => Promise.resolve(`folder:${name}`)),
+    listFiles: mock((parentId: string) => Promise.resolve(
+      (filesByParent[parentId] ?? []).map((file) => ({
+        id: file.id,
+        name: file.name,
+        kind: file.kind ?? "drive#file",
+        parent_id: file.parent_id ?? parentId,
+        size: "100",
+        created_time: file.created_time ?? "",
+        modified_time: file.modified_time ?? "",
+      }))
+    )),
     offlineDownload: mock(() => Promise.resolve({
       task: { id: "task_001", file_id: "file_001" },
       file: { id: "file_001" },
     })),
     uploadSmallFile: mock(() => Promise.resolve({ id: "xml_001" })),
+    deleteFile: mock(() => Promise.resolve(true)),
   } as any;
 }
 
@@ -168,5 +198,91 @@ describe("Replay recovery verification", () => {
     expect(backfilled).toBe(1);
     expect(pikpak.uploadSmallFile).toHaveBeenCalledWith("root-folder", "Recovery Anime S01E01.xml", expect.any(String));
     expect(getCachedDanmaku()).toHaveLength(1);
+  });
+
+  test("skips a delivered episode when local state and PikPak cloud still agree", async () => {
+    const source = createSource({ name: "Existing Feed", url: "https://example.com/existing.xml" });
+    createRule({ name: "Existing include", pattern: "Existing", mode: "include", sourceId: source.id });
+
+    const [storedItem] = storeNewItems(source.id, [
+      {
+        title: "[SubGroup] Existing Anime - 01 [1080p].mkv",
+        guid: "existing-guid-01",
+        link: "https://example.com/existing-01",
+        magnetUrl: "magnet:?xt=urn:btih:existing01",
+        torrentUrl: null,
+        homepage: null,
+      },
+    ]);
+
+    const db = getDb(":memory:");
+    db.run(sql`INSERT INTO episode_delivery_state (
+      normalized_title, season_number, episode_number, cloud_path,
+      video_status, video_file_name, video_file_id, video_verified_at,
+      danmaku_status, created_at, updated_at
+    ) VALUES (
+      'existinganime', 1, 1, 'root-folder',
+      'delivered', '[SubGroup] Existing Anime - 01 [1080p].mkv', 'file_existing', datetime('now'),
+      'pending', datetime('now'), datetime('now')
+    )`);
+
+    const pikpak = createMockPikPakClient({
+      "root-folder": [
+        { id: "file_existing", name: "[SubGroup] Existing Anime - 01 [1080p].mkv" },
+      ],
+    });
+
+    const replay = await replayStoredItems(pikpak, { sourceId: source.id, trigger: "startup" });
+
+    expect(replay.submitted).toBe(0);
+    expect(pikpak.offlineDownload).not.toHaveBeenCalled();
+    expect(getReplayState(storedItem.id)).toMatchObject({ status: "duplicate" });
+  });
+
+  test("fresh danmaku skips repeated search but stale danmaku refreshes on later pass", async () => {
+    const db = getDb(":memory:");
+    db.run(sql`INSERT INTO pikpak_tasks (
+      rss_item_id, magnet_url, pikpak_task_id, pikpak_file_id,
+      cloud_path, status, original_name, renamed_name, error_message,
+      created_at, updated_at
+    ) VALUES (
+      NULL, 'magnet:?xt=urn:btih:refresh-recovery-01', 'task_refresh_01', 'file_refresh_01',
+      'root-folder', 'renamed', '[SubGroup] Recovery Anime - 01 [1080p].mkv', 'Recovery Anime S01E01.mkv', NULL,
+      datetime('now'), datetime('now')
+    )`);
+    db.run(sql`INSERT INTO episode_delivery_state (
+      normalized_title, season_number, episode_number, cloud_path,
+      video_status, video_file_name, video_file_id, video_verified_at,
+      danmaku_status, danmaku_uploaded_at, danmaku_checked_at,
+      xml_file_name, xml_file_id, created_at, updated_at
+    ) VALUES (
+      'recoveryanime', 1, 1, 'root-folder',
+      'delivered', 'Recovery Anime S01E01.mkv', 'file_refresh_01', datetime('now'),
+      'fresh', datetime('now'), datetime('now'),
+      'Recovery Anime S01E01.xml', 'xml_existing_01', datetime('now'), datetime('now')
+    )`);
+
+    const pikpak = createMockPikPakClient({
+      "root-folder": [
+        { id: "xml_existing_01", name: "Recovery Anime S01E01.xml", modified_time: new Date().toISOString() },
+      ],
+    });
+    const ddp = createMockDdpClient();
+
+    const firstPass = await backfillDanmakuForRenamedTasks(pikpak, ddp);
+    expect(firstPass).toBe(0);
+    expect(ddp.searchEpisodes).not.toHaveBeenCalled();
+
+    db.run(sql`UPDATE episode_delivery_state
+      SET danmaku_uploaded_at = datetime('now', '-8 day'),
+          danmaku_checked_at = datetime('now', '-8 day'),
+          updated_at = datetime('now', '-8 day')
+      WHERE normalized_title = 'recoveryanime'`);
+
+    const stalePass = await backfillDanmakuForRenamedTasks(pikpak, ddp);
+    expect(stalePass).toBe(1);
+    expect(pikpak.deleteFile).toHaveBeenCalledWith("xml_existing_01");
+    expect(ddp.searchEpisodes).toHaveBeenCalledTimes(1);
+    expect(pikpak.uploadSmallFile).toHaveBeenCalledWith("root-folder", "Recovery Anime S01E01.xml", expect.any(String));
   });
 });

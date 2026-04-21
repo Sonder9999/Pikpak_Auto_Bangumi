@@ -2,11 +2,13 @@ import { getSubject, initBangumi } from "./bangumi/index.ts";
 import { loadConfig, getConfig, resolveConfigPath } from "./config/config.ts";
 import { getDb } from "./db/connection.ts";
 import { applyFilters } from "./filter/filter-engine.ts";
+import { buildEpisodeDeliveryKey, buildEpisodeIdentity, findMatchingVideoFile } from "./episode-state/matching.ts";
+import { getEpisodeDeliveryState, markEpisodeDelivered, markEpisodeMissing } from "./episode-state/store.ts";
 import { createLogger, setGlobalLogLevel } from "./logger.ts";
 import { rawParser } from "./parser/raw-parser.ts";
 import { getPikPakClient } from "./pikpak/client.ts";
 import { pollTaskStatuses, submitDownload } from "./pikpak/task-manager.ts";
-import { processRenames, setPostRenameHandler, type RenameResult } from "./renamer/renamer.ts";
+import { buildRenamedName, processRenames, setPostRenameHandler, type RenameResult } from "./renamer/renamer.ts";
 import { getReplayState, getReplayableItems, type ReplayStatus, type StoredRssItem, updateReplayState } from "./rss/item-store.ts";
 import { getSourceById } from "./rss/source-crud.ts";
 import { setNewItemHandler, startScheduler, stopScheduler } from "./rss/scheduler.ts";
@@ -29,6 +31,12 @@ export interface ReplaySummary {
 }
 
 type SubmissionMode = "new" | "replay";
+
+interface EpisodePreflightPlan {
+  parentId: string;
+  deliveryKey: ReturnType<typeof buildEpisodeDeliveryKey> | null;
+  expectedVideoName: string | null;
+}
 
 function enqueueSubmissionWork<T>(work: () => Promise<T>): Promise<T> {
   const run = submissionQueue.then(work, work);
@@ -154,6 +162,87 @@ async function resolveParentFolderId(client: PikPakClient, item: StoredRssItem, 
   return currentId;
 }
 
+async function buildEpisodePreflightPlan(
+  client: PikPakClient,
+  item: StoredRssItem,
+  baseId: string
+): Promise<EpisodePreflightPlan> {
+  const config = getConfig();
+  const parentId = await resolveParentFolderId(client, item, baseId);
+  const parsed = rawParser(item.title);
+  let identity = buildEpisodeIdentity(parsed);
+  let expectedVideoName: string | null = item.title;
+
+  if (config.rename.enabled && config.rename.method !== "none") {
+    const source = getSourceById(item.sourceId);
+    const renameInfo = await buildRenamedName(item.title, {
+      bangumiSubjectId: source?.bangumiSubjectId ?? null,
+    });
+
+    if (renameInfo) {
+      identity = buildEpisodeIdentity(renameInfo.episode) ?? identity;
+      expectedVideoName = renameInfo.name;
+    }
+  }
+
+  return {
+    parentId,
+    deliveryKey: identity ? buildEpisodeDeliveryKey(identity, parentId) : null,
+    expectedVideoName,
+  };
+}
+
+async function checkEpisodeCloudState(
+  client: PikPakClient,
+  plan: EpisodePreflightPlan
+): Promise<{ skipSubmission: boolean; matchedFileName?: string }> {
+  if (!plan.deliveryKey) {
+    return { skipSubmission: false };
+  }
+
+  const deliveryState = getEpisodeDeliveryState(plan.deliveryKey);
+
+  let files = [];
+  try {
+    files = await client.listFiles(plan.parentId);
+  } catch (error) {
+    logger.warn("Episode preflight cloud listing failed", {
+      cloudPath: plan.parentId,
+      title: plan.deliveryKey.normalizedTitle,
+      season: plan.deliveryKey.seasonNumber,
+      episode: plan.deliveryKey.episodeNumber,
+      error: String(error),
+    });
+    return { skipSubmission: false };
+  }
+
+  const exactName = deliveryState?.videoFileName ?? plan.expectedVideoName ?? null;
+  const matchedFile = findMatchingVideoFile(files, plan.deliveryKey, exactName);
+
+  if (deliveryState?.videoStatus === "delivered") {
+    if (matchedFile) {
+      markEpisodeDelivered(plan.deliveryKey, {
+        videoFileName: matchedFile.name,
+        videoFileId: matchedFile.id,
+      });
+      return { skipSubmission: true, matchedFileName: matchedFile.name };
+    }
+
+    markEpisodeMissing(plan.deliveryKey);
+    return { skipSubmission: false };
+  }
+
+  if (!matchedFile) {
+    return { skipSubmission: false };
+  }
+
+  markEpisodeDelivered(plan.deliveryKey, {
+    videoFileName: matchedFile.name,
+    videoFileId: matchedFile.id,
+  });
+  return { skipSubmission: true, matchedFileName: matchedFile.name };
+}
+
 async function processStoredItems(
   client: PikPakClient,
   items: StoredRssItem[],
@@ -239,7 +328,17 @@ async function processStoredItems(
         baseId = await client.ensurePath(config.pikpak.cloudBasePath);
       }
 
-      const parentId = await resolveParentFolderId(client, item, baseId);
+      const plan = await buildEpisodePreflightPlan(client, item, baseId);
+      const cloudCheck = await checkEpisodeCloudState(client, plan);
+      if (cloudCheck.skipSubmission) {
+        updateReplayState(item.id, "duplicate", {
+          decisionReason: `Episode already exists in PikPak target folder: ${cloudCheck.matchedFileName ?? "matched existing cloud file"}`,
+        });
+        summary.duplicates += 1;
+        continue;
+      }
+
+      const parentId = plan.parentId;
       const submission = await submitDownload(client, url, parentId, item.id, item.title);
 
       if (submission.reason === "submitted") {
@@ -316,6 +415,8 @@ export function startPipeline(): void {
         parentFolderId: result.parentFolderId,
         videoFileName: result.renamedName,
         pikpakFileId: result.pikpakFileId,
+        seasonNumber: result.parsedEpisode.season > 0 ? result.parsedEpisode.season : 1,
+        normalizedTitle: buildEpisodeIdentity(result.parsedEpisode)?.normalizedTitle,
       });
     });
     logger.info("Danmaku post-rename handler registered");

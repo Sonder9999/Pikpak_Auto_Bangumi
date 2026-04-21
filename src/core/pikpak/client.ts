@@ -227,6 +227,19 @@ export class PikPakClient {
     return resp;
   }
 
+  async deleteFile(fileId: string): Promise<boolean> {
+    logger.info("Deleting file", { fileId });
+    const resp = await this.request<{ error_code?: number; error?: string }>(
+      "DELETE",
+      `${DRIVE_API_BASE}/drive/v1/files/${fileId}`
+    );
+    if (resp.error_code) {
+      logger.warn("Delete file failed", { fileId, error: resp.error, errorCode: resp.error_code });
+      return false;
+    }
+    return true;
+  }
+
   /**
    * Upload a small file (< 1MB) to PikPak via resumable upload.
    * Suitable for danmaku XML and similar tiny files.

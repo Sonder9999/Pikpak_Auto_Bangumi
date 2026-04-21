@@ -19,6 +19,24 @@ function initTestDb() {
     xml_file_id TEXT,
     downloaded_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  db.run(sql`CREATE TABLE IF NOT EXISTS episode_delivery_state (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    normalized_title TEXT NOT NULL,
+    season_number INTEGER NOT NULL,
+    episode_number INTEGER NOT NULL,
+    cloud_path TEXT NOT NULL,
+    video_status TEXT NOT NULL DEFAULT 'missing',
+    video_file_name TEXT,
+    video_file_id TEXT,
+    video_verified_at TEXT,
+    danmaku_status TEXT NOT NULL DEFAULT 'pending',
+    danmaku_uploaded_at TEXT,
+    danmaku_checked_at TEXT,
+    xml_file_name TEXT,
+    xml_file_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
   return db;
 }
 
@@ -26,6 +44,8 @@ function initTestDb() {
 function createMockPikPakClient() {
   return {
     uploadSmallFile: mock(() => Promise.resolve({ id: "xml_file_001", name: "test.xml", kind: "drive#file", parent_id: "folder1", size: "100", created_time: "", modified_time: "" })),
+    listFiles: mock(() => Promise.resolve([])),
+    deleteFile: mock(() => Promise.resolve(true)),
   } as any;
 }
 
@@ -269,5 +289,102 @@ describe("downloadDanmaku", () => {
     expect(backfilled).toBe(1);
     expect(pikpak.uploadSmallFile).toHaveBeenCalledWith("folder1", "黑猫与魔女的教室 S01E01.xml", expect.any(String));
     expect(getCachedDanmaku()).toHaveLength(1);
+  });
+
+  test("skips DanDanPlay search for fresh danmaku flags on repeated backfill scans", async () => {
+    const db = getDb(":memory:");
+    db.run(sql`INSERT INTO pikpak_tasks (
+      rss_item_id, magnet_url, pikpak_task_id, pikpak_file_id,
+      cloud_path, status, original_name, renamed_name, error_message,
+      created_at, updated_at
+    ) VALUES (
+      NULL, 'magnet:?xt=urn:btih:freshxml01', 'task_fresh_01', 'file_fresh_01',
+      'folder1', 'renamed', '[LoliHouse] 黑猫与魔女的教室 - 01 [1080p].mkv', '黑猫与魔女的教室 S01E01.mkv', NULL,
+      datetime('now'), datetime('now')
+    )`);
+    db.run(sql`INSERT INTO episode_delivery_state (
+      normalized_title, season_number, episode_number, cloud_path,
+      video_status, video_file_name, video_file_id, video_verified_at,
+      danmaku_status, danmaku_uploaded_at, danmaku_checked_at,
+      xml_file_name, xml_file_id, created_at, updated_at
+    ) VALUES (
+      '黑猫与魔女的教室', 1, 1, 'folder1',
+      'delivered', '黑猫与魔女的教室 S01E01.mkv', 'file_fresh_01', datetime('now'),
+      'fresh', datetime('now'), datetime('now'),
+      '黑猫与魔女的教室 S01E01.xml', 'xml_fresh_01', datetime('now'), datetime('now')
+    )`);
+
+    const pikpak = createMockPikPakClient();
+    pikpak.listFiles = mock(() => Promise.resolve([
+      { id: 'xml_fresh_01', name: '黑猫与魔女的教室 S01E01.xml', kind: 'drive#file', parent_id: 'folder1', size: '100', created_time: '', modified_time: '' },
+    ]));
+
+    const ddp = createMockDdpClient({
+      searchEpisodes: mock(() => Promise.resolve([])) as any,
+    } as any);
+
+    const danmakuModule = await import("../../src/core/danmaku/service.ts") as Record<string, any>;
+    const backfillDanmakuForRenamedTasks = danmakuModule.backfillDanmakuForRenamedTasks;
+
+    expect(typeof backfillDanmakuForRenamedTasks).toBe("function");
+    if (typeof backfillDanmakuForRenamedTasks !== "function") return;
+
+    const backfilled = await backfillDanmakuForRenamedTasks(pikpak, ddp);
+    expect(backfilled).toBe(0);
+    expect(ddp.searchEpisodes).not.toHaveBeenCalled();
+  });
+
+  test("refreshes stale danmaku by deleting old XML and re-uploading a fresh copy", async () => {
+    const db = getDb(":memory:");
+    db.run(sql`INSERT INTO pikpak_tasks (
+      rss_item_id, magnet_url, pikpak_task_id, pikpak_file_id,
+      cloud_path, status, original_name, renamed_name, error_message,
+      created_at, updated_at
+    ) VALUES (
+      NULL, 'magnet:?xt=urn:btih:stalexml02', 'task_stale_02', 'file_stale_02',
+      'folder1', 'renamed', '[LoliHouse] 黑猫与魔女的教室 - 02 [1080p].mkv', '黑猫与魔女的教室 S01E02.mkv', NULL,
+      datetime('now'), datetime('now')
+    )`);
+    db.run(sql`INSERT INTO episode_delivery_state (
+      normalized_title, season_number, episode_number, cloud_path,
+      video_status, video_file_name, video_file_id, video_verified_at,
+      danmaku_status, danmaku_uploaded_at, danmaku_checked_at,
+      xml_file_name, xml_file_id, created_at, updated_at
+    ) VALUES (
+      '黑猫与魔女的教室', 1, 2, 'folder1',
+      'delivered', '黑猫与魔女的教室 S01E02.mkv', 'file_stale_02', datetime('now'),
+      'fresh', datetime('now', '-8 day'), datetime('now', '-8 day'),
+      '黑猫与魔女的教室 S01E02.xml', 'xml_stale_02', datetime('now', '-8 day'), datetime('now', '-8 day')
+    )`);
+
+    const pikpak = createMockPikPakClient();
+    pikpak.listFiles = mock(() => Promise.resolve([
+      { id: 'xml_stale_02', name: '黑猫与魔女的教室 S01E02.xml', kind: 'drive#file', parent_id: 'folder1', size: '100', created_time: '', modified_time: '' },
+    ]));
+
+    const ddp = createMockDdpClient({
+      searchEpisodes: mock(() => Promise.resolve([
+        {
+          episodeId: 195160002,
+          animeId: 195160,
+          animeTitle: '黑猫与魔女的教室',
+          episodeTitle: '第2话',
+          type: 'tvseries',
+          typeDescription: 'TV',
+          shift: 0,
+        },
+      ])) as any,
+    } as any);
+
+    const danmakuModule = await import("../../src/core/danmaku/service.ts") as Record<string, any>;
+    const backfillDanmakuForRenamedTasks = danmakuModule.backfillDanmakuForRenamedTasks;
+
+    expect(typeof backfillDanmakuForRenamedTasks).toBe("function");
+    if (typeof backfillDanmakuForRenamedTasks !== "function") return;
+
+    const backfilled = await backfillDanmakuForRenamedTasks(pikpak, ddp);
+    expect(backfilled).toBe(1);
+    expect(pikpak.deleteFile).toHaveBeenCalledWith('xml_stale_02');
+    expect(pikpak.uploadSmallFile).toHaveBeenCalledWith('folder1', '黑猫与魔女的教室 S01E02.xml', expect.any(String));
   });
 });

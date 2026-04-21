@@ -29,6 +29,13 @@
       "when": 1776772800000,
       "tag": "0003_sturdy_rss_replay",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1776778800000,
+      "tag": "0004_episode_delivery_state",
+      "breakpoints": true
     }
   ]
 }

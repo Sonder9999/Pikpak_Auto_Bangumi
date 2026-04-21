@@ -6,6 +6,8 @@ import { rawParser } from "../parser/raw-parser.ts";
 import { getSubject } from "../bangumi/index.ts";
 import { getSourceByRssItemId } from "../rss/source-crud.ts";
 import { searchAnime } from "../tmdb/index.ts";
+import { buildEpisodeDeliveryKey, buildEpisodeIdentity } from "../episode-state/matching.ts";
+import { markEpisodeDelivered } from "../episode-state/store.ts";
 import type { Episode } from "../parser/types.ts";
 
 const logger = createLogger("renamer");
@@ -184,6 +186,15 @@ export async function processRenames(client: PikPakClient): Promise<number> {
 
     if (ok) {
       updateTaskStatus(task.id, "renamed", { renamedName: renameInfo.name });
+
+      const deliveryIdentity = buildEpisodeIdentity(renameInfo.episode);
+      if (deliveryIdentity && task.cloudPath) {
+        markEpisodeDelivered(buildEpisodeDeliveryKey(deliveryIdentity, task.cloudPath), {
+          videoFileName: renameInfo.name,
+          videoFileId: task.pikpakFileId ?? null,
+        });
+      }
+
       renamed++;
 
       // Post-rename hook (e.g., danmaku download)
