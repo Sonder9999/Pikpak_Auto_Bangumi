@@ -1,5 +1,6 @@
 import { Elysia, t } from "elysia";
 import { createSource, getAllSources, updateSource, type RssSource } from "../../core/rss/source-crud.ts";
+import { refreshScheduler } from "../../core/rss/scheduler.ts";
 import { createRule, deleteRule, getRulesBySourceId, updateRule } from "../../core/filter/rule-crud.ts";
 import { createLogger } from "../../core/logger.ts";
 
@@ -104,6 +105,7 @@ export const subscriptionsRoutes = new Elysia({ prefix: "/api/subscriptions" })
 
       syncRule(source.id, "include", body.regexInclude, sourceName);
       syncRule(source.id, "exclude", body.regexExclude, sourceName);
+      refreshScheduler();
 
       return { success: true, updated, source };
     } catch (e) {

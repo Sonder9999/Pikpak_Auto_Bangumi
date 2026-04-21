@@ -1,12 +1,21 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { closeDb, getDb } from "../../src/core/db/connection.ts";
 import { getRulesBySourceId } from "../../src/core/filter/rule-crud.ts";
 import { getAllSources } from "../../src/core/rss/source-crud.ts";
+import { setNewItemHandler, startScheduler, stopScheduler } from "../../src/core/rss/scheduler.ts";
 import { subscriptionsRoutes } from "../../src/server/routes/subscriptions.ts";
 
 const TEST_DB = ":memory:";
+const EMPTY_RSS_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+  </channel>
+</rss>`;
+
+let originalFetch: typeof globalThis.fetch;
 
 function initTestDb() {
   const db = getDb(TEST_DB);
@@ -35,6 +44,19 @@ function initTestDb() {
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  db.run(sql`CREATE TABLE IF NOT EXISTS rss_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id INTEGER NOT NULL REFERENCES rss_sources(id) ON DELETE CASCADE,
+    guid TEXT NOT NULL,
+    title TEXT NOT NULL,
+    link TEXT,
+    magnet_url TEXT,
+    torrent_url TEXT,
+    homepage TEXT,
+    processed INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  )`);
 }
 
 async function postSubscription(app: Elysia, body: Record<string, unknown>) {
@@ -58,9 +80,19 @@ describe("Subscriptions routes", function () {
   beforeEach(function () {
     closeDb();
     initTestDb();
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response(EMPTY_RSS_XML, {
+        status: 200,
+        headers: { "Content-Type": "application/rss+xml" },
+      }))
+    );
   });
 
   afterEach(function () {
+    stopScheduler();
+    globalThis.fetch = originalFetch;
+    mock.restore();
     closeDb();
   });
 
@@ -118,5 +150,37 @@ describe("Subscriptions routes", function () {
     expect(rules.length).toBe(1);
     expect(rules[0]?.mode).toBe("include");
     expect(rules[0]?.pattern).toBe("2160p");
+  });
+
+  test("POST /api/subscriptions refreshes the running scheduler for new sources", async function () {
+    const app = new Elysia().use(subscriptionsRoutes);
+    globalThis.fetch = mock(() =>
+      Promise.resolve(new Response(EMPTY_RSS_XML, {
+        status: 200,
+        headers: { "Content-Type": "application/rss+xml" },
+      }))
+    );
+
+    setNewItemHandler(() => undefined);
+    startScheduler();
+
+    const response = await postSubscription(app, {
+      bangumiId: 576351,
+      mikanId: null,
+      rssUrl: "https://example.com/new-feed.xml",
+    });
+
+    expect(response.status).toBe(200);
+
+    await Bun.sleep(50);
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "https://example.com/new-feed.xml",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Accept: "application/rss+xml, application/xml, text/xml",
+        }),
+      })
+    );
   });
 });

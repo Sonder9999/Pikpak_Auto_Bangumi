@@ -12,6 +12,7 @@ import { danmakuRoutes } from "./routes/danmaku.ts";
 import { mikanRoutes } from "./routes/mikan.ts";
 import { subscriptionsRoutes } from "./routes/subscriptions.ts";
 import { jwtAuth } from "./middleware/auth.ts";
+import { resolveFrontendDistDir } from "./frontend-assets.ts";
 
 const logger = createLogger("server");
 
@@ -26,7 +27,7 @@ const config = getConfig();
 
 const app = new Elysia()
   .use(staticPlugin({
-    assets: "frontend/dist",
+    assets: resolveFrontendDistDir(),
     prefix: "/",
     alwaysStatic: false,
   }))
