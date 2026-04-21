@@ -22,6 +22,9 @@ config.json
 .env
 .env.*
 
+# Exploratory test scripts with hardcoded credentials
+tests/test_bangumi_*.ts
+
 # IDE
 .vscode/
 .idea/
