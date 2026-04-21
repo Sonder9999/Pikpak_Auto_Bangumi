@@ -15,6 +15,11 @@ RSS 订阅源 → RSS 调度器 → 过滤引擎 → PikPak 下载 → 任务轮
 ## 目录结构
 
 ```
+frontend/
+├── src/
+│   ├── api/            # 前端 API 封装
+│   └── components/     # 收藏看板、番剧卡片、详情抽屉等 UI 组件
+
 src/
 ├── core/
 │   ├── config/         # 配置加载、Schema (Zod)、导入导出
@@ -29,8 +34,9 @@ src/
 │   ├── rss/            # RSS 拉取、解析、条目存储、调度器
 │   └── tmdb/           # TMDB API 客户端（官方标题 + 年份）
 ├── server/
-│   ├── index.ts        # ElysiaJS 服务器入口
-│   └── routes/         # API 路由（rss, rules, config, tasks, danmaku）
+│   ├── main.ts         # 当前 HTTP 服务入口（package.json 默认使用）
+│   ├── middleware/     # JWT 认证等中间件
+│   └── routes/         # API 路由（bangumi, mikan, subscriptions, rss, rules, config, tasks, danmaku）
 ├── cli/                # CLI 模式入口
 └── index.ts            # 主入口（模式分发）
 ```
@@ -44,6 +50,34 @@ src/
 1. `initCore()` — 加载配置、初始化 DB、认证 PikPak、初始化 TMDB
 2. `startPipeline()` — 注册 RSS 调度器、启动任务轮询、注册重命名/弹幕回调
 3. `handleNewItems()` — 处理新 RSS 条目：过滤 → TMDB 查询 → 创建文件夹 → 提交下载
+
+### Web UI 数据流
+
+这次变更后，Web UI 已经成为正式的使用入口之一。核心数据流如下：
+
+```text
+CollectionBoard
+    ├─ GET /api/config                -> 判断 Bangumi 是否已配置
+    ├─ GET /api/rss                   -> 读取本地订阅源，推导已订阅状态
+    └─ GET /api/bangumi/collections   -> 加载收藏列表与分页数据
+
+BangumiDetailDrawer
+    ├─ GET /api/mikan/search          -> 搜索 Mikan 条目
+    ├─ GET /api/mikan/bangumi-detail  -> 拉取字幕组与资源列表
+    ├─ GET /api/rss + GET /api/rules  -> 回填已有手动 RSS 订阅
+    └─ POST /api/subscriptions        -> 创建/更新订阅
+```
+
+### 前端静态资源提供方式
+
+`src/server/main.ts` 通过 `@elysiajs/static` 直接对外提供 `frontend/dist`，因此：
+
+- 常规启动只需要后端服务即可访问网页
+- 开发时可选配 `bun run dev:frontend` 获取 Vite 的热更新体验
+
+### Mikan 详情归一化
+
+为了兼容旧版 Mikan 返回结构和新版资源列表结构，服务端在 `mikanRoutes` 中统一把字幕组资源整理为 `episodes[]`，前端详情抽屉只消费一种结构，降低了 UI 兼容复杂度
 
 ### PikPak 认证流程
 

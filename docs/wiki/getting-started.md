@@ -15,11 +15,7 @@ bun install
 
 ## 配置
 
-复制配置模板并填写必要字段：
-
-```bash
-cp config.example.json config.json
-```
+在项目根目录手动创建 `config.json`，并填写必要字段：
 
 最小配置示例（`config.json`）：
 
@@ -46,21 +42,60 @@ cp config.example.json config.json
 
 ## 启动
 
-### Server 模式（推荐）
+### 常规启动（推荐）
+
+先构建前端，再启动服务端：
 
 ```bash
-bun run src/index.ts
+bun run build:frontend
+bun run start
 ```
 
-服务器在 `http://localhost:7810` 启动，通过 REST API 管理 RSS 订阅和过滤规则。
+或显式启动服务端入口：
+
+```bash
+bun run start:server
+```
+
+服务器在 `http://localhost:7810` 启动，同时提供 REST API 和构建后的网页界面。
+
+### 开发模式
+
+如果需要同时调试后端和前端界面，建议使用两个终端：
+
+```bash
+# 终端 1：后端监听
+bun run dev
+
+# 终端 2：前端 Vite 开发服务器
+bun run dev:frontend
+```
+
+说明：
+
+- `bun run dev` 使用 `src/server/main.ts` 作为当前服务端入口
+- `bun run dev:frontend` 会启动 Vite，并把 `/api` 请求代理到 `http://localhost:7810`
 
 ### CLI 模式
 
 ```bash
-bun run src/index.ts --mode cli
+bun run start:cli
 ```
 
 直接在终端运行，适合简单场景或调试。
+
+## 通过网页界面订阅番剧
+
+现在除了直接调用 API，也可以通过 Web UI 完成收藏浏览和订阅：
+
+1. 打开 `http://localhost:7810`
+2. 配置 Bangumi Token
+3. 在收藏看板中点击番剧卡片
+4. 在详情抽屉中选择：
+  - Mikan 字幕组订阅
+  - 或手动输入 RSS 订阅
+
+详见 [网页界面与订阅流程](./web-ui.md)
 
 ## 添加 RSS 订阅
 
@@ -75,7 +110,7 @@ curl -X POST http://localhost:7810/api/rss \
 ```bash
 curl -X POST http://localhost:7810/api/rules \
   -H "Content-Type: application/json" \
-  -d '{"name":"LoliHouse 1080p","pattern":"LoliHouse.*- 01 ","type":"include","sourceId":1}'
+  -d '{"name":"LoliHouse 1080p","pattern":"LoliHouse.*- 01 ","mode":"include","sourceId":1}'
 ```
 
 ## 目录结构

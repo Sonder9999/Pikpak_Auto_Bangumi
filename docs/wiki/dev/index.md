@@ -4,9 +4,13 @@
 
 ```bash
 bun install
-bun test         # 运行所有测试
-bun run src/index.ts  # 启动开发服务器
+bun run dev          # 后端监听（当前入口：src/server/main.ts）
+bun run dev:frontend # 前端 Vite 开发服务器
+bun run build:frontend
+bun test
 ```
+
+如果只需要跑后端并直接访问构建后的页面，可先执行 `bun run build:frontend`，再运行 `bun run start`。
 
 ## 测试
 
@@ -18,6 +22,8 @@ bun test
 bun test tests/core/tmdb-client.test.ts
 bun test tests/core/renamer.test.ts
 bun test tests/e2e/pipeline.test.ts
+bun test tests/core/mikan-routes.test.ts
+bun test tests/core/subscriptions-routes.test.ts
 ```
 
 ## 代码规范
@@ -29,6 +35,7 @@ bun test tests/e2e/pipeline.test.ts
 
 ## 子文档
 
+- [网页界面与订阅流程](../web-ui.md)
 - [数据库 Schema](./database.md)
 - [API 接口](./api.md)
 - [PikPak 集成](./pikpak-integration.md)
