@@ -2,9 +2,10 @@ import { eq } from "drizzle-orm";
 import { createLogger } from "../logger.ts";
 import { getConfig } from "../config/config.ts";
 import { getDb } from "../db/connection.ts";
-import { danmakuCache } from "../db/schema.ts";
+import { danmakuCache, pikpakTasks } from "../db/schema.ts";
 import { DandanplayClient, DandanplayError } from "./client.ts";
 import { generateDanmakuXml } from "./xml-generator.ts";
+import { rawParser } from "../parser/raw-parser.ts";
 import type { PikPakClient } from "../pikpak/client.ts";
 
 const logger = createLogger("danmaku-service");
@@ -14,6 +15,7 @@ export interface DanmakuDownloadRequest {
   episode: number;
   parentFolderId: string;
   videoFileName: string;
+  pikpakFileId?: string;
 }
 
 export interface DanmakuDownloadResult {
@@ -33,6 +35,16 @@ function isCached(episodeId: number): boolean {
     .where(eq(danmakuCache.episodeId, episodeId))
     .get();
   return !!existing;
+}
+
+function isCachedByPikPakFileId(pikpakFileId: string): boolean {
+  const db = getDb();
+  const existing = db
+    .select({ id: danmakuCache.id })
+    .from(danmakuCache)
+    .where(eq(danmakuCache.pikpakFileId, pikpakFileId))
+    .get();
+  return existing !== undefined;
 }
 
 /** Store a successful download record */
@@ -77,6 +89,11 @@ export async function downloadDanmaku(
   if (!client.isConfigured()) {
     logger.info("DanDanPlay not configured (missing appId/appSecret)");
     return { success: false, skipped: true };
+  }
+
+  if (request.pikpakFileId && isCachedByPikPakFileId(request.pikpakFileId)) {
+    logger.debug("Danmaku already cached for PikPak file", { pikpakFileId: request.pikpakFileId });
+    return { success: true, skipped: true };
   }
 
   const { animeTitle, episode, parentFolderId, videoFileName } = request;
@@ -132,7 +149,7 @@ export async function downloadDanmaku(
   }
 
   // 6. Cache the result
-  cacheRecord(matched.episodeId, matched.animeTitle, matched.episodeTitle, null, xmlFileId);
+  cacheRecord(matched.episodeId, matched.animeTitle, matched.episodeTitle, request.pikpakFileId ?? null, xmlFileId);
 
   logger.info("Danmaku download complete", {
     episodeId: matched.episodeId,
@@ -142,4 +159,60 @@ export async function downloadDanmaku(
   });
 
   return { success: true, episodeId: matched.episodeId, xmlFileId: xmlFileId ?? undefined };
+}
+
+export async function backfillDanmakuForRenamedTasks(
+  pikpakClient: PikPakClient,
+  ddpClient?: DandanplayClient
+): Promise<number> {
+  const config = getConfig();
+  if (!config.dandanplay.enabled) {
+    logger.debug("DanDanPlay disabled, skipping danmaku backfill");
+    return 0;
+  }
+
+  const db = getDb();
+  const renamedTasks = db
+    .select()
+    .from(pikpakTasks)
+    .where(eq(pikpakTasks.status, "renamed"))
+    .all();
+
+  let backfilled = 0;
+
+  for (const task of renamedTasks) {
+    if (!task.cloudPath || !task.renamedName) {
+      continue;
+    }
+
+    if (task.pikpakFileId && isCachedByPikPakFileId(task.pikpakFileId)) {
+      continue;
+    }
+
+    const parsed = rawParser(task.renamedName) ?? (task.originalName ? rawParser(task.originalName) : null);
+    const animeTitle = parsed?.nameEn ?? parsed?.nameZh ?? parsed?.nameJp ?? null;
+    if (!parsed || !animeTitle || parsed.episode <= 0) {
+      logger.debug("Skipping danmaku backfill for unparseable renamed task", { taskId: task.id, renamedName: task.renamedName });
+      continue;
+    }
+
+    try {
+      const result = await downloadDanmaku(pikpakClient, {
+        animeTitle,
+        episode: parsed.episode,
+        parentFolderId: task.cloudPath,
+        videoFileName: task.renamedName,
+        pikpakFileId: task.pikpakFileId ?? undefined,
+      }, ddpClient);
+
+      if (result.success && !result.skipped) {
+        backfilled += 1;
+      }
+    } catch (error) {
+      logger.warn("Danmaku backfill failed for renamed task", { taskId: task.id, error: String(error) });
+    }
+  }
+
+  logger.info("Danmaku backfill scan completed", { total: renamedTasks.length, backfilled });
+  return backfilled;
 }

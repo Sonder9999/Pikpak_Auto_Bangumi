@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, or } from "drizzle-orm";
 import { getDb } from "../db/connection.ts";
 import { pikpakTasks } from "../db/schema.ts";
 import { createLogger } from "../logger.ts";
@@ -6,65 +6,37 @@ import { PikPakClient } from "./client.ts";
 
 const logger = createLogger("pikpak-task");
 
-/** Check if a magnet URL was already submitted */
-export function isDuplicateSubmission(magnetUrl: string): boolean {
+export type PikPakTaskRecord = typeof pikpakTasks.$inferSelect;
+
+export interface DownloadSubmissionResult {
+  taskRecord: PikPakTaskRecord | null;
+  submitted: boolean;
+  reason: "submitted" | "duplicate" | "error";
+  error?: string;
+}
+
+export function getTrackedTaskBySubmissionUrl(magnetUrl: string): PikPakTaskRecord | undefined {
   const db = getDb();
-  const existing = db
+  return db
     .select()
     .from(pikpakTasks)
     .where(
       and(
         eq(pikpakTasks.magnetUrl, magnetUrl),
-        // Not in error state (allow retry of failed tasks)
-        eq(pikpakTasks.status, "pending")
+        or(
+          eq(pikpakTasks.status, "pending"),
+          eq(pikpakTasks.status, "downloading"),
+          eq(pikpakTasks.status, "complete"),
+          eq(pikpakTasks.status, "renamed")
+        )
       )
     )
     .get();
+}
 
-  if (!existing) {
-    // Also check active downloads
-    const downloading = db
-      .select()
-      .from(pikpakTasks)
-      .where(
-        and(
-          eq(pikpakTasks.magnetUrl, magnetUrl),
-          eq(pikpakTasks.status, "downloading")
-        )
-      )
-      .get();
-
-    if (!downloading) {
-      // Check completed
-      const complete = db
-        .select()
-        .from(pikpakTasks)
-        .where(
-          and(
-            eq(pikpakTasks.magnetUrl, magnetUrl),
-            eq(pikpakTasks.status, "complete")
-          )
-        )
-        .get();
-
-      if (!complete) {
-        const renamed = db
-          .select()
-          .from(pikpakTasks)
-          .where(
-            and(
-              eq(pikpakTasks.magnetUrl, magnetUrl),
-              eq(pikpakTasks.status, "renamed")
-            )
-          )
-          .get();
-        return !!renamed;
-      }
-      return true;
-    }
-    return true;
-  }
-  return true;
+/** Check if a magnet URL was already submitted */
+export function isDuplicateSubmission(magnetUrl: string): boolean {
+  return getTrackedTaskBySubmissionUrl(magnetUrl) !== undefined;
 }
 
 /** Create a task record in the database */
@@ -128,11 +100,12 @@ export async function submitDownload(
   parentFolderId: string,
   rssItemId: number | null,
   originalName?: string
-): Promise<{ taskRecord: ReturnType<typeof createTaskRecord>; submitted: boolean }> {
+): Promise<DownloadSubmissionResult> {
   // Check duplicates
-  if (isDuplicateSubmission(magnetUrl)) {
+  const duplicateTask = getTrackedTaskBySubmissionUrl(magnetUrl);
+  if (duplicateTask) {
     logger.info("Skipping duplicate magnet", { magnetUrl: magnetUrl.slice(0, 60) });
-    return { taskRecord: null as never, submitted: false };
+    return { taskRecord: duplicateTask, submitted: false, reason: "duplicate" };
   }
 
   // Create DB record
@@ -142,9 +115,10 @@ export async function submitDownload(
     const resp = await client.offlineDownload(magnetUrl, parentFolderId);
 
     if (resp.error_code) {
-      updateTaskStatus(taskRecord.id, "error", { errorMessage: resp.error ?? "Unknown error" });
-      logger.error("Offline download failed", { error: resp.error });
-      return { taskRecord, submitted: false };
+      const error = resp.error ?? "Unknown error";
+      updateTaskStatus(taskRecord.id, "error", { errorMessage: error });
+      logger.error("Offline download failed", { error });
+      return { taskRecord, submitted: false, reason: "error", error };
     }
 
     updateTaskStatus(taskRecord.id, "downloading", {
@@ -158,11 +132,12 @@ export async function submitDownload(
       pikpakTaskId: resp.task?.id,
     });
 
-    return { taskRecord, submitted: true };
+    return { taskRecord, submitted: true, reason: "submitted" };
   } catch (e) {
-    updateTaskStatus(taskRecord.id, "error", { errorMessage: String(e) });
-    logger.error("Download submission exception", { error: String(e) });
-    return { taskRecord, submitted: false };
+    const error = String(e);
+    updateTaskStatus(taskRecord.id, "error", { errorMessage: error });
+    logger.error("Download submission exception", { error });
+    return { taskRecord, submitted: false, reason: "error", error };
   }
 }
 

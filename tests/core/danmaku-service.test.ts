@@ -61,6 +61,21 @@ beforeEach(() => {
   if (existsSync(TEST_CONFIG_PATH)) rmSync(TEST_CONFIG_PATH);
   closeDb();
   initTestDb();
+  const db = getDb(":memory:");
+  db.run(sql`CREATE TABLE IF NOT EXISTS pikpak_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rss_item_id INTEGER,
+    magnet_url TEXT NOT NULL,
+    pikpak_task_id TEXT,
+    pikpak_file_id TEXT,
+    cloud_path TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    original_name TEXT,
+    renamed_name TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`);
   loadConfig(TEST_CONFIG_PATH);
   updateConfig({ dandanplay: { enabled: true, appId: "testId", appSecret: "testSecret" } });
 });
@@ -215,5 +230,44 @@ describe("downloadDanmaku", () => {
 
     // Check that upload was called with .xml filename
     expect(pikpak.uploadSmallFile).toHaveBeenCalledWith("folder1", "S01E05.xml", expect.any(String));
+  });
+
+  test("backfills XML for renamed tasks that are missing successful danmaku cache", async () => {
+    const db = getDb(":memory:");
+    db.run(sql`INSERT INTO pikpak_tasks (
+      rss_item_id, magnet_url, pikpak_task_id, pikpak_file_id,
+      cloud_path, status, original_name, renamed_name, error_message,
+      created_at, updated_at
+    ) VALUES (
+      NULL, 'magnet:?xt=urn:btih:backfill01', 'task_001', 'file_001',
+      'folder1', 'renamed', '[LoliHouse] 黑猫与魔女的教室 - 01 [1080p].mkv', '黑猫与魔女的教室 S01E01.mkv', NULL,
+      datetime('now'), datetime('now')
+    )`);
+
+    const pikpak = createMockPikPakClient();
+    const ddp = createMockDdpClient({
+      searchEpisodes: mock(() => Promise.resolve([
+        {
+          episodeId: 195160001,
+          animeId: 195160,
+          animeTitle: "黑猫与魔女的教室",
+          episodeTitle: "第1话 黑猫与丝碧卡",
+          type: "tvseries",
+          typeDescription: "TV",
+          shift: 0,
+        },
+      ])) as any,
+    } as any);
+
+    const danmakuModule = await import("../../src/core/danmaku/service.ts") as Record<string, any>;
+    const backfillDanmakuForRenamedTasks = danmakuModule.backfillDanmakuForRenamedTasks;
+
+    expect(typeof backfillDanmakuForRenamedTasks).toBe("function");
+    if (typeof backfillDanmakuForRenamedTasks !== "function") return;
+
+    const backfilled = await backfillDanmakuForRenamedTasks(pikpak, ddp);
+    expect(backfilled).toBe(1);
+    expect(pikpak.uploadSmallFile).toHaveBeenCalledWith("folder1", "黑猫与魔女的教室 S01E01.xml", expect.any(String));
+    expect(getCachedDanmaku()).toHaveLength(1);
   });
 });

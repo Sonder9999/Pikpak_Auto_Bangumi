@@ -40,6 +40,9 @@ function initTestDb() {
     torrent_url TEXT,
     homepage TEXT,
     processed INTEGER NOT NULL DEFAULT 0,
+    replay_status TEXT NOT NULL DEFAULT 'pending',
+    decision_reason TEXT,
+    linked_task_id INTEGER,
     created_at TEXT NOT NULL
   )`);
   db.run(sql`CREATE TABLE IF NOT EXISTS filter_rules (

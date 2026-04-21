@@ -27,7 +27,11 @@ function initTestDb() {
     source_id INTEGER NOT NULL REFERENCES rss_sources(id) ON DELETE CASCADE,
     guid TEXT NOT NULL, title TEXT NOT NULL, link TEXT,
     magnet_url TEXT, torrent_url TEXT, homepage TEXT,
-    processed INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL
+    processed INTEGER NOT NULL DEFAULT 0,
+    replay_status TEXT NOT NULL DEFAULT 'pending',
+    decision_reason TEXT,
+    linked_task_id INTEGER,
+    created_at TEXT NOT NULL
   )`);
   db.run(sql`CREATE TABLE IF NOT EXISTS pikpak_tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

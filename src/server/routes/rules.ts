@@ -3,8 +3,19 @@ import {
   getAllRules, getRuleById, createRule, updateRule, deleteRule,
 } from "../../core/filter/rule-crud.ts";
 import { createLogger } from "../../core/logger.ts";
+import { getPikPakClient } from "../../core/pikpak/client.ts";
+import { replayStoredItems } from "../../core/pipeline.ts";
+import { requeueAllItemsForReplay } from "../../core/rss/item-store.ts";
 
 const logger = createLogger("api-rules");
+
+function triggerRuleReplay(reason: string): void {
+  const requeued = requeueAllItemsForReplay({ reason });
+  logger.info("Historical rule replay scheduled", { reason, requeued });
+  void replayStoredItems(getPikPakClient(), { trigger: reason }).catch((error) => {
+    logger.warn("Historical replay after rule change failed", { reason, error: String(error) });
+  });
+}
 
 export const rulesRoutes = new Elysia({ prefix: "/api/rules" })
   .get("/", () => {
@@ -19,6 +30,7 @@ export const rulesRoutes = new Elysia({ prefix: "/api/rules" })
   .post("/", ({ body }) => {
     logger.info("Creating filter rule", { name: body.name });
     const rule = createRule(body);
+    triggerRuleReplay("rule-created");
     return rule;
   }, {
     body: t.Object({
@@ -33,6 +45,7 @@ export const rulesRoutes = new Elysia({ prefix: "/api/rules" })
     logger.info("Updating filter rule", { id: params.id });
     const updated = updateRule(Number(params.id), body);
     if (!updated) return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    triggerRuleReplay("rule-updated");
     return updated;
   }, {
     body: t.Object({
@@ -47,5 +60,6 @@ export const rulesRoutes = new Elysia({ prefix: "/api/rules" })
     logger.info("Deleting filter rule", { id: params.id });
     const deleted = deleteRule(Number(params.id));
     if (!deleted) return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    triggerRuleReplay("rule-deleted");
     return { ok: true };
   });

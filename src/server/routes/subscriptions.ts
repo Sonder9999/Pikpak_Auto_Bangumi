@@ -7,6 +7,9 @@ import { createLogger } from "../../core/logger.ts";
 import { fetchRssFeed } from "../../core/rss/feed-parser.ts";
 import { groupPreviewItems, type PreviewGroupItem } from "../../core/rss/preview-grouping.ts";
 import { rawParser } from "../../core/parser/raw-parser.ts";
+import { requeueSourceItemsForReplay } from "../../core/rss/item-store.ts";
+import { replayStoredItems } from "../../core/pipeline.ts";
+import { getPikPakClient } from "../../core/pikpak/client.ts";
 
 const logger = createLogger("api-subscriptions");
 
@@ -109,7 +112,17 @@ export const subscriptionsRoutes = new Elysia({ prefix: "/api/subscriptions" })
 
       syncRule(source.id, "include", body.regexInclude, sourceName);
       syncRule(source.id, "exclude", body.regexExclude, sourceName);
+      const requeued = requeueSourceItemsForReplay(source.id, { reason: "subscription-updated" });
       refreshScheduler();
+
+      void replayStoredItems(getPikPakClient(), {
+        sourceId: source.id,
+        trigger: updated ? "subscription-updated" : "subscription-created",
+      }).catch((error) => {
+        logger.warn("Historical replay after subscription change failed", { sourceId: source.id, error: String(error) });
+      });
+
+      logger.info("Subscription replay scheduled", { sourceId: source.id, requeued });
 
       return { success: true, updated, source };
     } catch (e) {

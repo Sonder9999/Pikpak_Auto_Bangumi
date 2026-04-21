@@ -27,6 +27,9 @@ export const rssItems = sqliteTable("rss_items", {
   torrentUrl: text("torrent_url"),
   homepage: text("homepage"),
   processed: integer("processed", { mode: "boolean" }).notNull().default(false),
+  replayStatus: text("replay_status", { enum: ["pending", "filtered", "submitted", "duplicate", "error"] }).notNull().default("pending"),
+  decisionReason: text("decision_reason"),
+  linkedTaskId: integer("linked_task_id").references(() => pikpakTasks.id),
   createdAt: text("created_at").notNull().$defaultFn(() => new Date().toISOString()),
 });
 

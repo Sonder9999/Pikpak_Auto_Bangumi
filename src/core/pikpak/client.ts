@@ -15,6 +15,7 @@ const logger = createLogger("pikpak");
  */
 export class PikPakClient {
   private auth: PikPakAuth;
+  private authRecoveredHandler: (() => void | Promise<void>) | null = null;
 
   constructor(opts?: { tokenPath?: string; deviceId?: string; refreshToken?: string }) {
     this.auth = new PikPakAuth(opts);
@@ -27,12 +28,21 @@ export class PikPakClient {
   }
 
   async refreshAccessToken(): Promise<boolean> {
-    return this.auth.refreshAccessToken();
+    const refreshed = await this.auth.refreshAccessToken();
+    if (refreshed && this.authRecoveredHandler) {
+      try {
+        await this.authRecoveredHandler();
+      } catch (error) {
+        logger.warn("Auth recovery handler failed", { error: String(error) });
+      }
+    }
+    return refreshed;
   }
 
   getMode(): PikPakMode { return this.auth.mode; }
   isAuthenticated(): boolean { return !!this.auth.accessToken; }
   getUserId(): string { return this.auth.userId; }
+  setAuthRecoveredHandler(handler: (() => void | Promise<void>) | null): void { this.authRecoveredHandler = handler; }
 
   // ─── HTTP request helper ──────────────────────────────────────
 
@@ -75,7 +85,7 @@ export class PikPakClient {
     // Handle token expiry (error_code 16) — auto refresh
     if (data.error_code === 16 && this.auth.refreshToken) {
       logger.info("Access token expired, refreshing...");
-      const refreshed = await this.auth.refreshAccessToken();
+      const refreshed = await this.refreshAccessToken();
       if (refreshed) {
         headers["Authorization"] = `Bearer ${this.auth.accessToken}`;
         if (this.auth.mode === "web" && isDriveApi && !opts?.skipCaptcha) {
