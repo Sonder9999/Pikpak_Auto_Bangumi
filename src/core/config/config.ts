@@ -1,11 +1,23 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
-import { dirname } from "path";
+import { dirname, isAbsolute, resolve } from "path";
 import { AppConfigSchema, type AppConfig } from "./schema.ts";
 import { createLogger } from "../logger.ts";
 
 const logger = createLogger("config");
 
-const DEFAULT_CONFIG_PATH = "config.json";
+const DEFAULT_CONFIG_PATH = resolve(import.meta.dir, "../../..", "config.json");
+
+export function getDefaultConfigPath(): string {
+  return DEFAULT_CONFIG_PATH;
+}
+
+export function resolveConfigPath(targetPath: string): string {
+  if (!targetPath || targetPath === ":memory:" || isAbsolute(targetPath)) {
+    return targetPath;
+  }
+
+  return resolve(dirname(_configPath), targetPath);
+}
 
 function expandEnvVars(value: unknown): unknown {
   if (typeof value === "string") {
@@ -30,7 +42,7 @@ let _config: AppConfig | null = null;
 let _configPath = DEFAULT_CONFIG_PATH;
 
 export function loadConfig(configPath?: string): AppConfig {
-  _configPath = configPath ?? DEFAULT_CONFIG_PATH;
+  _configPath = configPath ? resolve(configPath) : DEFAULT_CONFIG_PATH;
 
   if (!existsSync(_configPath)) {
     logger.info("Config file not found, generating defaults", { path: _configPath });
@@ -63,7 +75,7 @@ export function loadConfig(configPath?: string): AppConfig {
 }
 
 export function saveConfig(config: AppConfig, configPath?: string): void {
-  const targetPath = configPath ?? _configPath;
+  const targetPath = configPath ? resolve(configPath) : _configPath;
   const dir = dirname(targetPath);
   if (dir && dir !== ".") {
     mkdirSync(dir, { recursive: true });

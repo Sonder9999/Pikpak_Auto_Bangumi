@@ -1,6 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, rmSync, mkdirSync } from "fs";
-import { loadConfig, saveConfig, getConfig, updateConfig, expandEnvVars } from "../../src/core/config/config.ts";
+import { resolve } from "path";
+import { loadConfig, saveConfig, getConfig, updateConfig, expandEnvVars, getDefaultConfigPath, resolveConfigPath } from "../../src/core/config/config.ts";
 import { exportConfig, importConfig } from "../../src/core/config/export.ts";
 import { AppConfigSchema } from "../../src/core/config/schema.ts";
 
@@ -59,6 +60,36 @@ describe("env var expansion", () => {
 });
 
 describe("loadConfig / saveConfig", () => {
+  test("default config path stays at project root when cwd changes", () => {
+    const originalCwd = process.cwd();
+    const nestedDir = resolve("data", "config-cwd");
+
+    mkdirSync(nestedDir, { recursive: true });
+    process.chdir(nestedDir);
+
+    try {
+      expect(getDefaultConfigPath()).toBe(resolve(import.meta.dir, "../../config.json"));
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(nestedDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolveConfigPath anchors relative paths to current config file", () => {
+    const testConfigDir = resolve("data", "config-root");
+    const testConfigPath = resolve(testConfigDir, "config.json");
+
+    mkdirSync(testConfigDir, { recursive: true });
+    loadConfig(testConfigPath);
+
+    expect(resolveConfigPath("runtime/pikpak_token.json")).toBe(
+      resolve(testConfigDir, "runtime", "pikpak_token.json")
+    );
+    expect(resolveConfigPath(":memory:")).toBe(":memory:");
+
+    rmSync(testConfigDir, { recursive: true, force: true });
+  });
+
   test("creates default config when file does not exist", () => {
     const config = loadConfig(TEST_CONFIG_PATH);
     expect(config.general.port).toBe(7810);

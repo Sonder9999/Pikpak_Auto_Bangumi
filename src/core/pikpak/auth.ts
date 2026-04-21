@@ -149,7 +149,7 @@ export class PikPakAuth {
 
   // ─── Auth flows ───────────────────────────────────────────────
 
-  /** Full auth flow: cache -> WEB login -> LIB login -> refresh fallback */
+  /** Full auth flow: cache -> refresh token -> WEB login -> LIB login */
   async auth(username?: string, password?: string): Promise<boolean> {
     // Step 1: Try cached token
     if (this.loadToken()) {
@@ -158,15 +158,28 @@ export class PikPakAuth {
         logger.info("Authenticated from cached token");
         return true;
       }
-      const refreshed = await this.refreshAccessToken();
-      if (refreshed) {
-        logger.info("Authenticated after token refresh");
-        return true;
-      }
-      logger.warn("Cached token invalid, proceeding to login");
+      logger.warn("Cached token invalid, trying refresh token");
     }
 
-    // Step 2: Try WEB mode login first (captcha signing with SALTS)
+    // Step 2: Try refresh token before password login
+    if (this.refreshToken) {
+      this.mode = "web";
+      logger.info("Attempting WEB mode with refresh_token...");
+      const refreshed = await this.refreshAccessToken();
+      if (refreshed) {
+        const valid = await this.verifyToken();
+        if (valid) {
+          this.saveToken();
+          logger.info("Authenticated after token refresh");
+          return true;
+        }
+        logger.warn("Refreshed token verification failed, proceeding to password login");
+      } else {
+        logger.warn("Refresh token auth failed, proceeding to password login");
+      }
+    }
+
+    // Step 3: Try WEB mode login first (captcha signing with SALTS)
     if (username && password) {
       this.mode = "web";
       logger.info("Attempting WEB mode login with captcha...");
@@ -179,7 +192,7 @@ export class PikPakAuth {
       logger.warn("WEB login failed, trying LIB mode");
     }
 
-    // Step 3: Try LIB login (only if credentials provided)
+    // Step 4: Try LIB login (only if credentials provided)
     if (username && password) {
       this.mode = "lib";
       logger.info("Attempting LIB mode login...");
@@ -190,21 +203,6 @@ export class PikPakAuth {
         return true;
       }
       logger.warn("LIB login failed");
-    }
-
-    // Step 4: WEB mode refresh fallback (requires existing refresh_token)
-    if (this.refreshToken) {
-      this.mode = "web";
-      logger.info("Attempting WEB mode with refresh_token...");
-      const webOk = await this.refreshAccessToken();
-      if (webOk) {
-        const valid = await this.verifyToken();
-        if (valid) {
-          this.saveToken();
-          logger.info("WEB mode authentication successful");
-          return true;
-        }
-      }
     }
 
     logger.error("All authentication methods failed");
@@ -300,6 +298,14 @@ export class PikPakAuth {
         "Authorization": `Bearer ${this.accessToken}`,
         "X-Device-ID": this.deviceId,
       };
+
+      if (this.mode === "web") {
+        const captchaToken = await this.getCaptchaToken("GET:/drive/v1/files");
+        if (captchaToken) {
+          headers["X-Captcha-Token"] = captchaToken;
+        }
+      }
+
       const url = `${DRIVE_API_BASE}/drive/v1/tasks?type=offline&page_token=&page_size=1`;
       const resp = await fetch(url, { headers });
       const data = (await resp.json()) as { error_code?: number };

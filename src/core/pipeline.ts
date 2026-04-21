@@ -1,6 +1,6 @@
 import { createLogger } from "./logger.ts";
 import { getSubject, initBangumi } from "./bangumi/index.ts";
-import { loadConfig, getConfig } from "./config/config.ts";
+import { loadConfig, getConfig, resolveConfigPath } from "./config/config.ts";
 import { getDb } from "./db/connection.ts";
 import { getPikPakClient } from "./pikpak/client.ts";
 import { setNewItemHandler, startScheduler, stopScheduler } from "./rss/scheduler.ts";
@@ -25,15 +25,17 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 export async function initCore(configPath?: string): Promise<boolean> {
   const config = loadConfig(configPath);
   setGlobalLogLevel(config.general.logLevel);
+  const resolvedDbPath = resolveConfigPath(config.general.dbPath);
+  const resolvedTokenPath = resolveConfigPath(config.pikpak.tokenCachePath);
 
-  logger.info("Initializing core", { mode: config.general.mode, dbPath: config.general.dbPath });
+  logger.info("Initializing core", { mode: config.general.mode, dbPath: resolvedDbPath });
 
   // Initialize database
-  getDb(config.general.dbPath);
+  getDb(resolvedDbPath);
 
   // Authenticate PikPak
   const client = getPikPakClient({
-    tokenPath: config.pikpak.tokenCachePath,
+    tokenPath: resolvedTokenPath,
     deviceId: config.pikpak.deviceId || undefined,
     refreshToken: config.pikpak.refreshToken || undefined,
   });

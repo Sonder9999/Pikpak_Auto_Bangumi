@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "fs";
 import { sql } from "drizzle-orm";
 import { captchaSign } from "../../src/core/pikpak/crypto.ts";
@@ -142,6 +142,62 @@ describe("PikPakAuth token persistence", () => {
     const auth = new PikPakAuth();
     auth.mode = "lib";
     expect(auth.cfg.clientId).toBe("YNxT9w7GMdWvEOKa");
+  });
+
+  test("auth tries refresh token before password login when refresh token is already available", async () => {
+    const auth = new PikPakAuth({ tokenPath: TEST_TOKEN_PATH, refreshToken: "seeded-refresh-token" });
+    const calls: string[] = [];
+
+    auth.loadToken = () => {
+      calls.push("loadToken");
+      return false;
+    };
+    auth.verifyToken = async () => {
+      calls.push("verifyToken");
+      return true;
+    };
+    auth.refreshAccessToken = async () => {
+      calls.push("refreshAccessToken");
+      auth.accessToken = "access-from-refresh";
+      auth.userId = "user-from-refresh";
+      return true;
+    };
+    (auth as unknown as { loginWithPassword: (username: string, password: string) => Promise<boolean> }).loginWithPassword = async () => {
+      calls.push("loginWithPassword");
+      return false;
+    };
+
+    const ok = await auth.auth("user@example.com", "password");
+
+    expect(ok).toBe(true);
+    expect(calls).toEqual(["loadToken", "refreshAccessToken", "verifyToken"]);
+  });
+
+  test("verifyToken attaches captcha token in web mode", async () => {
+    const auth = new PikPakAuth({ tokenPath: TEST_TOKEN_PATH });
+    const originalFetch = globalThis.fetch;
+
+    auth.mode = "web";
+    auth.accessToken = "access-token";
+    auth.userId = "user-id";
+    auth.getCaptchaToken = async () => "captcha-token";
+
+    globalThis.fetch = mock((_url: string | URL | Request, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string>;
+
+      expect(headers.Authorization).toBe("Bearer access-token");
+      expect(headers["X-Captcha-Token"]).toBe("captcha-token");
+
+      return Promise.resolve(new Response(JSON.stringify({ tasks: [] }), { status: 200 }));
+    });
+
+    try {
+      const ok = await auth.verifyToken();
+      expect(ok).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+      mock.restore();
+    }
   });
 });
 
