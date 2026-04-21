@@ -10,6 +10,7 @@ export interface RssSource {
   url: string;
   enabled: boolean;
   pollIntervalMs: number;
+  bangumiSubjectId: number | null;
   lastSuccessAt: string | null;
   lastErrorAt: string | null;
   lastError: string | null;
@@ -23,6 +24,7 @@ export interface CreateRssSourceInput {
   url: string;
   enabled?: boolean;
   pollIntervalMs?: number;
+  bangumiSubjectId?: number | null;
 }
 
 export interface UpdateRssSourceInput {
@@ -30,6 +32,7 @@ export interface UpdateRssSourceInput {
   url?: string;
   enabled?: boolean;
   pollIntervalMs?: number;
+  bangumiSubjectId?: number | null;
 }
 
 export function getAllSources(): RssSource[] {
@@ -55,6 +58,18 @@ export function getSourceById(id: number): RssSource | undefined {
     .get();
 }
 
+export function getSourceByRssItemId(rssItemId: number): RssSource | undefined {
+  const db = getDb();
+  const row = db
+    .select({ source: schema.rssSources })
+    .from(schema.rssItems)
+    .innerJoin(schema.rssSources, eq(schema.rssItems.sourceId, schema.rssSources.id))
+    .where(eq(schema.rssItems.id, rssItemId))
+    .get();
+
+  return row?.source;
+}
+
 export function createSource(input: CreateRssSourceInput): RssSource {
   const db = getDb();
   const now = new Date().toISOString();
@@ -65,6 +80,7 @@ export function createSource(input: CreateRssSourceInput): RssSource {
       url: input.url,
       enabled: input.enabled ?? true,
       pollIntervalMs: input.pollIntervalMs ?? 300000,
+      bangumiSubjectId: input.bangumiSubjectId ?? null,
       createdAt: now,
       updatedAt: now,
     })
@@ -87,6 +103,7 @@ export function updateSource(id: number, input: UpdateRssSourceInput): RssSource
       ...(input.url !== undefined && { url: input.url }),
       ...(input.enabled !== undefined && { enabled: input.enabled }),
       ...(input.pollIntervalMs !== undefined && { pollIntervalMs: input.pollIntervalMs }),
+      ...(input.bangumiSubjectId !== undefined && { bangumiSubjectId: input.bangumiSubjectId }),
       updatedAt: new Date().toISOString(),
     })
     .where(eq(schema.rssSources.id, id))

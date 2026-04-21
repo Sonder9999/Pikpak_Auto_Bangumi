@@ -1,7 +1,9 @@
 import { Elysia, t } from "elysia";
+import { initBangumi } from "../../core/bangumi/index.ts";
 import { getConfig, updateConfig } from "../../core/config/config.ts";
 import { exportConfig, importConfig } from "../../core/config/export.ts";
 import { createLogger } from "../../core/logger.ts";
+import { initTmdb } from "../../core/tmdb/index.ts";
 
 const logger = createLogger("api-config");
 
@@ -12,7 +14,9 @@ export const configRoutes = new Elysia({ prefix: "/api/config" })
   })
   .patch("/", ({ body }) => {
     logger.info("Updating config");
-    updateConfig(body as Record<string, unknown>);
+    const config = updateConfig(body as Record<string, unknown>);
+    initTmdb(config.tmdb.apiKey, config.tmdb.language);
+    initBangumi(config.bangumi.token);
     return exportConfig();
   }, {
     body: t.Record(t.String(), t.Unknown()),
@@ -23,7 +27,9 @@ export const configRoutes = new Elysia({ prefix: "/api/config" })
   })
   .post("/import", ({ body }) => {
     logger.info("Importing config");
-    importConfig(body as Record<string, unknown>);
+    const config = importConfig(body as Record<string, unknown>);
+    initTmdb(config.tmdb.apiKey, config.tmdb.language);
+    initBangumi(config.bangumi.token);
     return exportConfig();
   }, {
     body: t.Record(t.String(), t.Unknown()),

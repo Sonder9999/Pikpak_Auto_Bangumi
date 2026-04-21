@@ -38,6 +38,12 @@ export const TmdbConfigSchema = z.object({
 
 const TMDB_DEFAULTS: z.input<typeof TmdbConfigSchema> = {};
 
+export const BangumiConfigSchema = z.object({
+  token: z.string().default(""),
+});
+
+const BANGUMI_DEFAULTS: z.input<typeof BangumiConfigSchema> = {};
+
 export const DandanplayConfigSchema = z.object({
   enabled: z.boolean().default(false),
   appId: z.string().default(""),
@@ -65,6 +71,7 @@ export const AppConfigSchema = z
     rename: RenameConfigSchema.optional(),
     dandanplay: DandanplayConfigSchema.optional(),
     tmdb: TmdbConfigSchema.optional(),
+    bangumi: BangumiConfigSchema.optional(),
   })
   .transform((val) => ({
     general: GeneralConfigSchema.parse(val.general ?? GENERAL_DEFAULTS),
@@ -73,6 +80,7 @@ export const AppConfigSchema = z
     rename: RenameConfigSchema.parse(val.rename ?? RENAME_DEFAULTS),
     dandanplay: DandanplayConfigSchema.parse(val.dandanplay ?? DANDANPLAY_DEFAULTS),
     tmdb: TmdbConfigSchema.parse(val.tmdb ?? TMDB_DEFAULTS),
+    bangumi: BangumiConfigSchema.parse(val.bangumi ?? BANGUMI_DEFAULTS),
   }));
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;
@@ -82,3 +90,4 @@ export type RenameConfig = z.infer<typeof RenameConfigSchema>;
 export type GeneralConfig = z.infer<typeof GeneralConfigSchema>;
 export type DandanplayConfig = z.infer<typeof DandanplayConfigSchema>;
 export type TmdbConfig = z.infer<typeof TmdbConfigSchema>;
+export type BangumiConfig = z.infer<typeof BangumiConfigSchema>;

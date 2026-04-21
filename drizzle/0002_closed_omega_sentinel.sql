@@ -1,0 +1,1 @@
+ALTER TABLE `rss_sources` ADD `bangumi_subject_id` integer;

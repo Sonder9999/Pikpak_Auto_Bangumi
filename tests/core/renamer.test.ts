@@ -1,12 +1,14 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, rmSync, mkdirSync } from "fs";
 import { sql } from "drizzle-orm";
-import { renderTemplate, buildRenamedName } from "../../src/core/renamer/renamer.ts";
-import { loadConfig, saveConfig } from "../../src/core/config/config.ts";
+import { buildRenamedName, renderTemplate } from "../../src/core/renamer/renamer.ts";
+import { loadConfig, updateConfig } from "../../src/core/config/config.ts";
 import { getDb, closeDb } from "../../src/core/db/connection.ts";
+import { initBangumi } from "../../src/core/bangumi/client.ts";
 import type { Episode } from "../../src/core/parser/types.ts";
 
 const TEST_CONFIG_PATH = "data/test-renamer-config.json";
+const originalFetch = globalThis.fetch;
 
 function initTestDb() {
   const db = getDb(":memory:");
@@ -15,6 +17,7 @@ function initTestDb() {
     name TEXT NOT NULL, url TEXT NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
     poll_interval_ms INTEGER NOT NULL DEFAULT 300000,
+    bangumi_subject_id INTEGER,
     last_success_at TEXT, last_error_at TEXT, last_error TEXT,
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -43,11 +46,14 @@ beforeEach(() => {
   closeDb();
   initTestDb();
   loadConfig(TEST_CONFIG_PATH);
+  initBangumi("");
+  globalThis.fetch = originalFetch;
 });
 
 afterEach(() => {
   closeDb();
   if (existsSync(TEST_CONFIG_PATH)) rmSync(TEST_CONFIG_PATH);
+  globalThis.fetch = originalFetch;
 });
 
 // ─── Template rendering ─────────────────────────────────────────
@@ -109,30 +115,63 @@ describe("renderTemplate", () => {
 // ─── buildRenamedName ───────────────────────────────────────────
 
 describe("buildRenamedName", () => {
-  test("parses and renames standard filename", () => {
-    const result = buildRenamedName("[Lilith-Raws] Sousou no Frieren - 05 [Baha][WEB-DL][1080p][AVC AAC][CHT][MP4].mp4");
+  test("parses and renames standard filename", async () => {
+    const result = await buildRenamedName("[Lilith-Raws] Sousou no Frieren - 05 [Baha][WEB-DL][1080p][AVC AAC][CHT][MP4].mp4");
     expect(result).not.toBeNull();
-    // Should contain S01E05 (season defaults to 1)
     expect(result!.name).toContain("E05");
     expect(result!.name).toEndWith(".mp4");
   });
 
-  test("returns null for unparseable filename", () => {
-    const result = buildRenamedName("random-text-no-episode-info.txt");
+  test("returns null for unparseable filename", async () => {
+    const result = await buildRenamedName("random-text-no-episode-info.txt");
     expect(result).toBeNull();
   });
 
-  test("handles filename with season info", () => {
-    const result = buildRenamedName("[SubGroup] Title S02E10 [1080P].mkv");
+  test("handles filename with season info", async () => {
+    const result = await buildRenamedName("[SubGroup] Title S02E10 [1080P].mkv");
     expect(result).not.toBeNull();
     expect(result!.name).toContain("S02");
     expect(result!.name).toContain("E10");
   });
 
-  test("defaults season to 1 when not detected", () => {
-    const result = buildRenamedName("[SubGroup] Some Anime - 03 [1080P].mkv");
+  test("defaults season to 1 when not detected", async () => {
+    const result = await buildRenamedName("[SubGroup] Some Anime - 03 [1080P].mkv");
     expect(result).not.toBeNull();
     expect(result!.name).toContain("S01");
     expect(result!.name).toContain("E03");
+  });
+
+  test("prefers Bangumi metadata over TMDB when bound subject id is provided", async () => {
+    initBangumi("bangumi-token");
+    updateConfig({ bangumi: { token: "bangumi-token" } });
+
+    globalThis.fetch = (async (input) => {
+      expect(String(input)).toContain("/subjects/576351");
+
+      return new Response(JSON.stringify({
+        id: 576351,
+        name: "Kuroneko to Majo no Kyoushitsu",
+        name_cn: "黑猫与魔女的教室",
+        date: "2026-04-12",
+        images: { large: "https://lain.bgm.tv/pic/cover/l/example.jpg" },
+        rating: { score: 7.4, total: 1499 },
+        tags: [],
+        summary: "summary",
+        eps: 12,
+        url: "https://bgm.tv/subject/576351",
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+
+    const result = await buildRenamedName(
+      "[SubGroup] Kuroneko to Majo no Kyoushitsu - 02 [1080P].mkv",
+      { bangumiSubjectId: 576351 }
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.name).toContain("黑猫与魔女的教室");
+    expect(result!.episode.year).toBe("2026");
   });
 });

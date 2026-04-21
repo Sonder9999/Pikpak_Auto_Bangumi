@@ -22,7 +22,8 @@ describe("config schema", () => {
     expect(config.general.mode).toBe("server");
     expect(config.pikpak.cloudBasePath).toBe("/Anime");
     expect(config.rss.defaultPollIntervalMs).toBe(300000);
-    expect(config.rename.template).toBe("S{season}E{episode}.{ext}");
+    expect(config.rename.template).toBe("{title} S{season}E{episode}.{ext}");
+    expect(config.bangumi.token).toBe("");
   });
 
   test("rejects invalid values", () => {
@@ -80,15 +81,27 @@ describe("updateConfig", () => {
     expect(updated.general.port).toBe(8080);
     expect(updated.pikpak.cloudBasePath).toBe("/Anime");
   });
+
+  test("merges nested bangumi config", () => {
+    loadConfig(TEST_CONFIG_PATH);
+    const updated = updateConfig({ bangumi: { token: "bangumi-token" } });
+
+    expect(updated.bangumi.token).toBe("bangumi-token");
+    expect(updated.general.port).toBe(7810);
+  });
 });
 
 describe("export / import", () => {
   test("export sanitizes sensitive fields", () => {
     loadConfig(TEST_CONFIG_PATH);
-    updateConfig({ pikpak: { password: "my-secret-pw" } });
+    updateConfig({
+      pikpak: { password: "my-secret-pw" },
+      bangumi: { token: "bangumi-token" },
+    });
 
     const exported = exportConfig(true);
     expect(exported.pikpak.password).toBe("***");
+    expect(exported.bangumi.token).toBe("***");
   });
 
   test("export without sanitize keeps sensitive fields", () => {
@@ -101,14 +114,19 @@ describe("export / import", () => {
 
   test("import preserves masked sensitive fields", () => {
     loadConfig(TEST_CONFIG_PATH);
-    updateConfig({ pikpak: { password: "original-pw" } });
+    updateConfig({
+      pikpak: { password: "original-pw" },
+      bangumi: { token: "original-token" },
+    });
 
     const imported = importConfig({
       pikpak: { password: "***" },
+      bangumi: { token: "***" },
       general: { port: 3000 },
     });
 
     expect(imported.pikpak.password).toBe("original-pw");
+    expect(imported.bangumi.token).toBe("original-token");
     expect(imported.general.port).toBe(3000);
   });
 });

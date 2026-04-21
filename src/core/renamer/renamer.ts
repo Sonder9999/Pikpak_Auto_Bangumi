@@ -3,6 +3,8 @@ import { getConfig } from "../config/config.ts";
 import type { PikPakClient } from "../pikpak/client.ts";
 import { getTasksByStatus, updateTaskStatus } from "../pikpak/task-manager.ts";
 import { rawParser } from "../parser/raw-parser.ts";
+import { getSubject } from "../bangumi/index.ts";
+import { getSourceByRssItemId } from "../rss/source-crud.ts";
 import { searchAnime } from "../tmdb/index.ts";
 import type { Episode } from "../parser/types.ts";
 
@@ -19,6 +21,10 @@ export interface RenameResult {
 
 /** Post-rename callback type */
 export type PostRenameHandler = (client: PikPakClient, result: RenameResult) => Promise<void>;
+
+export interface BuildRenameOptions {
+  bangumiSubjectId?: number | null;
+}
 
 let _postRenameHandler: PostRenameHandler | null = null;
 
@@ -51,7 +57,10 @@ function getExtension(fileName: string): string {
 }
 
 /** Build the renamed file name from original name using config template. Also returns parsed episode. */
-export async function buildRenamedName(originalName: string): Promise<{ name: string; episode: Episode } | null> {
+export async function buildRenamedName(
+  originalName: string,
+  options: BuildRenameOptions = {}
+): Promise<{ name: string; episode: Episode } | null> {
   const config = getConfig();
   const ep = rawParser(originalName);
   if (!ep || ep.episode <= 0) {
@@ -64,13 +73,35 @@ export async function buildRenamedName(originalName: string): Promise<{ name: st
     ep.season = 1;
   }
 
-  // TMDB lookup for advance mode
+  // Bangumi metadata takes precedence when a source is explicitly bound.
   if (config.rename.method === "advance") {
-    const parsedTitle = ep.nameEn ?? ep.nameZh ?? ep.nameJp ?? "Unknown";
-    const tmdb = await searchAnime(parsedTitle);
-    if (tmdb) {
-      ep.nameEn = tmdb.officialTitle;
-      ep.year = tmdb.year;
+    let resolvedByBangumi = false;
+
+    if (options.bangumiSubjectId) {
+      const subject = await getSubject(options.bangumiSubjectId);
+      const bangumiTitle = subject?.nameCn?.trim() || subject?.name?.trim() || null;
+
+      if (subject && bangumiTitle) {
+        ep.nameEn = bangumiTitle;
+        ep.nameZh = subject.nameCn ?? ep.nameZh ?? null;
+        ep.nameJp = subject.name ?? ep.nameJp ?? null;
+        ep.year = subject.year;
+        resolvedByBangumi = true;
+        logger.info("Bangumi metadata applied for rename", {
+          subjectId: options.bangumiSubjectId,
+          title: bangumiTitle,
+          year: subject.year,
+        });
+      }
+    }
+
+    if (!resolvedByBangumi) {
+      const parsedTitle = ep.nameEn ?? ep.nameZh ?? ep.nameJp ?? "Unknown";
+      const tmdb = await searchAnime(parsedTitle);
+      if (tmdb) {
+        ep.nameEn = tmdb.officialTitle;
+        ep.year = tmdb.year;
+      }
     }
   }
 
@@ -133,7 +164,10 @@ export async function processRenames(client: PikPakClient): Promise<number> {
       continue;
     }
 
-    const renameInfo = await buildRenamedName(originalName);
+    const source = task.rssItemId ? getSourceByRssItemId(task.rssItemId) : undefined;
+    const renameInfo = await buildRenamedName(originalName, {
+      bangumiSubjectId: source?.bangumiSubjectId ?? null,
+    });
     if (!renameInfo) {
       logger.warn("Could not build rename target", { taskId: task.id, originalName });
       updateTaskStatus(task.id, "error", { errorMessage: "Cannot parse metadata for rename" });

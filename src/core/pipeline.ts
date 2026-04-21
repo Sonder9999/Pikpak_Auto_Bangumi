@@ -1,4 +1,5 @@
 import { createLogger } from "./logger.ts";
+import { getSubject, initBangumi } from "./bangumi/index.ts";
 import { loadConfig, getConfig } from "./config/config.ts";
 import { getDb } from "./db/connection.ts";
 import { getPikPakClient } from "./pikpak/client.ts";
@@ -10,6 +11,7 @@ import { setPostRenameHandler } from "./renamer/renamer.ts";
 import { downloadDanmaku } from "./danmaku/service.ts";
 import { setGlobalLogLevel } from "./logger.ts";
 import { rawParser } from "./parser/raw-parser.ts";
+import { getSourceById } from "./rss/source-crud.ts";
 import { searchAnime, initTmdb } from "./tmdb/index.ts";
 import type { StoredRssItem } from "./rss/item-store.ts";
 import type { PikPakClient } from "./pikpak/client.ts";
@@ -56,6 +58,8 @@ export async function initCore(configPath?: string): Promise<boolean> {
     logger.info("TMDB not configured — advance mode will fall back to parsed title");
   }
 
+  initBangumi(config.bangumi.token);
+
   return authenticated;
 }
 
@@ -93,6 +97,7 @@ async function handleNewItems(items: StoredRssItem[]): Promise<void> {
 
   for (const item of toDownload) {
     const url = item.magnetUrl ?? item.torrentUrl ?? item.link!;
+    const source = getSourceById(item.sourceId);
 
     // Parse episode info to determine per-anime subfolder
     const ep = rawParser(item.title);
@@ -103,16 +108,38 @@ async function handleNewItems(items: StoredRssItem[]): Promise<void> {
       const season = String(ep.season).padStart(2, "0");
       let year = ep.year ?? "";
 
-      // TMDB lookup for official title + year
+      // Bangumi metadata takes precedence when the RSS source is bound to a subject.
       if (config.rename.method === "advance") {
-        const tmdb = await searchAnime(title);
-        if (tmdb) {
-          title = tmdb.officialTitle;
-          year = tmdb.year ?? "";
-          ep.year = tmdb.year;
-          logger.info("TMDB metadata applied", { original: ep.nameEn, official: title, year });
-        } else {
-          logger.warn("TMDB lookup failed, using parsed title", { title });
+        let resolvedByBangumi = false;
+
+        if (source?.bangumiSubjectId) {
+          const subject = await getSubject(source.bangumiSubjectId);
+          const bangumiTitle = subject?.nameCn?.trim() || subject?.name?.trim() || null;
+
+          if (subject && bangumiTitle) {
+            title = bangumiTitle;
+            year = subject.year ?? "";
+            ep.year = subject.year;
+            resolvedByBangumi = true;
+            logger.info("Bangumi metadata applied", {
+              sourceId: item.sourceId,
+              subjectId: source.bangumiSubjectId,
+              official: title,
+              year,
+            });
+          }
+        }
+
+        if (!resolvedByBangumi) {
+          const tmdb = await searchAnime(title);
+          if (tmdb) {
+            title = tmdb.officialTitle;
+            year = tmdb.year ?? "";
+            ep.year = tmdb.year;
+            logger.info("TMDB metadata applied", { original: ep.nameEn, official: title, year });
+          } else {
+            logger.warn("TMDB lookup failed, using parsed title", { title });
+          }
         }
       }
 

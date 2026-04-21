@@ -26,6 +26,7 @@ export const rssRoutes = new Elysia({ prefix: "/api/rss" })
       url: t.String(),
       enabled: t.Optional(t.Boolean()),
       pollIntervalMs: t.Optional(t.Number()),
+      bangumiSubjectId: t.Optional(t.Union([t.Number(), t.Null()])),
     }),
   })
   .patch("/:id", ({ params, body }) => {
@@ -39,6 +40,7 @@ export const rssRoutes = new Elysia({ prefix: "/api/rss" })
       url: t.Optional(t.String()),
       enabled: t.Optional(t.Boolean()),
       pollIntervalMs: t.Optional(t.Number()),
+      bangumiSubjectId: t.Optional(t.Union([t.Number(), t.Null()])),
     }),
   })
   .delete("/:id", ({ params }) => {

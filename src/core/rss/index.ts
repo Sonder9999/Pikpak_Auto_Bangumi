@@ -2,6 +2,7 @@ export {
   getAllSources,
   getEnabledSources,
   getSourceById,
+  getSourceByRssItemId,
   createSource,
   updateSource,
   deleteSource,

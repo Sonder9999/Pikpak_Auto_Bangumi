@@ -90,6 +90,8 @@ export function updateConfig(partial: Partial<AppConfig>): AppConfig {
     rss: { ...current.rss, ...(partial.rss ?? {}) },
     rename: { ...current.rename, ...(partial.rename ?? {}) },
     dandanplay: { ...current.dandanplay, ...(partial.dandanplay ?? {}) },
+    tmdb: { ...current.tmdb, ...(partial.tmdb ?? {}) },
+    bangumi: { ...current.bangumi, ...(partial.bangumi ?? {}) },
   };
 
   const result = AppConfigSchema.safeParse(merged);
