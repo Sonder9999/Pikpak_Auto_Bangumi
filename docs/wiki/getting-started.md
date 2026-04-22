@@ -2,22 +2,23 @@
 
 ## 环境要求
 
-- [Bun](https://bun.sh/) >= 1.0
-- PikPak 账号
+- [Bun](https://bun.sh/) 1.x
+- 一个可用的 PikPak 账号
+- 可选：Bangumi Token、TMDB API Key、DanDanPlay API 凭证
 
 ## 安装
 
 ```bash
-git clone https://github.com/your-repo/pikpak-auto-bangumi
+git clone <your-repo-url>
 cd pikpak-auto-bangumi
 bun install
 ```
 
 ## 配置
 
-在项目根目录手动创建 `config.json`，并填写必要字段：
+项目使用根目录的 `config.json`，该文件已被 `.gitignore` 排除。
 
-最小配置示例（`config.json`）：
+最小配置示例：
 
 ```json
 {
@@ -26,25 +27,30 @@ bun install
     "password": "yourpassword",
     "cloudBasePath": "/ACGN/Bangumi"
   },
+  "bangumi": {
+    "token": ""
+  },
   "tmdb": {
-    "apiKey": "your_tmdb_api_key",
+    "apiKey": "",
     "language": "zh-CN"
   },
   "dandanplay": {
-    "enabled": true,
-    "appId": "your_app_id",
-    "appSecret": "your_app_secret"
+    "enabled": false,
+    "appId": "",
+    "appSecret": ""
   }
 }
 ```
 
-> **注意**：`config.json` 包含敏感信息，已被 `.gitignore` 排除，不会提交到版本控制。
+说明：
 
-## 启动
+- 不配置 `bangumi.token` 时，网页收藏看板无法读取 Bangumi 收藏
+- 不配置 `tmdb.apiKey` 时，`advance` 重命名模式会回退到解析标题
+- 不配置 `dandanplay` 时，视频下载和重命名仍然可以运行
 
-### 常规启动（推荐）
+## 启动方式
 
-先构建前端，再启动服务端：
+### 常规启动
 
 ```bash
 bun run build:frontend
@@ -57,24 +63,17 @@ bun run start
 bun run start:server
 ```
 
-服务器在 `http://localhost:7810` 启动，同时提供 REST API 和构建后的网页界面。
+默认监听 `http://localhost:7810`，同一端口同时提供 REST API 和构建后的前端页面。
 
 ### 开发模式
 
-如果需要同时调试后端和前端界面，建议使用两个终端：
-
 ```bash
-# 终端 1：后端监听
+# 终端 1
 bun run dev
 
-# 终端 2：前端 Vite 开发服务器
+# 终端 2
 bun run dev:frontend
 ```
-
-说明：
-
-- `bun run dev` 使用 `src/server/main.ts` 作为当前服务端入口
-- `bun run dev:frontend` 会启动 Vite，并把 `/api` 请求代理到 `http://localhost:7810`
 
 ### CLI 模式
 
@@ -82,55 +81,62 @@ bun run dev:frontend
 bun run start:cli
 ```
 
-直接在终端运行后台进程，适合简单场景或调试。
+CLI 模式会初始化配置、数据库和 PikPak 客户端，并直接启动 RSS 调度与任务轮询，适合无 Web UI 的运行场景。
 
-#### 导入 qBittorrent 规则
+## 导入 qBittorrent RSS 规则
 
-支持将 qBittorrent 的 RSS 规则（`.json` 格式）批量导入到系统中，自动建立规则或忽略重复：
+如果你已经在 qBittorrent 里维护了 RSS 规则，可以直接导入：
 
 ```bash
-bun run src/index.ts --mode cli import-qbit-rss-rules "/path/to/qbit1.json" "/path/to/qbit2.json"
+bun run src/index.ts --mode cli import-qbit-rss-rules "F:/Anime/.../all_best.json"
 ```
 
-此命令可指定一个或多个 JSON 文件路径，系统会识别、清理过期规则并批量导入。
+也可以先打到数据库副本上做安全验证：
 
-## 通过网页界面订阅番剧
+```bash
+bun run src/index.ts --mode cli import-qbit-rss-rules \
+  "F:/Anime/.../2026_SPRING/all_best.json" \
+  "F:/Anime/.../2026_Winter/all_best.json" \
+  --db-path "data/test-rss.db"
+```
 
-现在除了直接调用 API，也可以通过 Web UI 完成收藏浏览和订阅：
+导入器行为：
+
+- 自动从 Mikan 详情解析 `bangumiSubjectId` 和 `mikanBangumiId`
+- 按 RSS URL 幂等更新已有源，不重复创建订阅
+- 同步 include / exclude 规则
+- 输出 JSON summary，包含 `created`、`updated`、`failed`、`duplicates`
+
+如果服务端正在运行，CLI 导入完成后建议重启后端，或通过订阅/规则接口触发一次刷新，让内存中的调度器重新装载最新源列表。
+
+## 通过网页界面订阅
 
 1. 打开 `http://localhost:7810`
-2. 配置 Bangumi Token
-3. 在收藏看板中点击番剧卡片
-4. 在详情抽屉中选择：
-  - Mikan 字幕组订阅
-  - 或手动输入 RSS 订阅
+2. 在设置页写入 Bangumi Token 和其他可选配置
+3. 在收藏看板中打开番剧详情抽屉
+4. 选择一条订阅路径：
+   - Mikan 字幕组订阅
+   - 手动 RSS 订阅
 
 详见 [网页界面与订阅流程](./web-ui.md)
 
-## 添加 RSS 订阅
+## 推荐的第一轮验证
 
-```bash
-curl -X POST http://localhost:7810/api/rss \
-  -H "Content-Type: application/json" \
-  -d '{"name":"黑猫与魔女的教室","url":"https://mikanani.me/RSS/Bangumi?bangumiId=3928","enabled":true}'
-```
+建议在完成配置后做以下检查：
 
-## 添加过滤规则
+1. 打开 `/api/health` 确认服务启动
+2. 打开 Web UI，确认能进入设置页和收藏页
+3. 先创建一个手动 RSS 订阅，再看 `GET /api/rss` 和 `GET /api/rules` 的结果
+4. 如需导入 qBit 规则，优先使用 `--db-path` 在副本库验证一次
 
-```bash
-curl -X POST http://localhost:7810/api/rules \
-  -H "Content-Type: application/json" \
-  -d '{"name":"LoliHouse 1080p","pattern":"LoliHouse.*- 01 ","mode":"include","sourceId":1}'
-```
+## PikPak 目录结构示例
 
-## 目录结构
+默认会把视频和弹幕整理到如下路径：
 
-下载完成后，文件会按以下结构存储在 PikPak 云端：
-
-```
+```text
 /ACGN/Bangumi/
   黑猫与魔女的教室 (2026)/
     Season 01/
       黑猫与魔女的教室 S01E01.mkv
-      黑猫与魔女的教室 S01E01.xml   ← 弹幕文件
+      黑猫与魔女的教室 S01E01.xml
 ```

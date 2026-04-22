@@ -1,8 +1,8 @@
 # REST API 接口
 
-服务器默认运行在 `http://localhost:7810`。
+默认服务地址为 `http://localhost:7810`。
 
-本文档重点覆盖当前 Web UI 会直接依赖的接口，以及这次新增或调整过的接口行为。
+本文档只记录当前实现仍然存在、且前端或运维会直接依赖的接口行为。
 
 ## 健康检查
 
@@ -10,74 +10,46 @@
 GET /api/health
 ```
 
----
+## Bangumi 相关
 
-## Bangumi 收藏与详情
-
-### 获取收藏列表（支持分页）
+### 获取收藏列表
 
 ```http
 GET /api/bangumi/collections?type=3&offset=0&limit=30
 ```
 
-查询参数：
+常用查询参数：
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `type` | string，可选 | Bangumi 收藏类型；当前常用值为 `1`（想看）、`2`（看过）、`3`（在看） |
-| `offset` | string，可选 | 从第几条开始，默认 `0` |
-| `limit` | string，可选 | 单页数量，默认 `30`，服务端上限 `100` |
+| 参数 | 说明 |
+|------|------|
+| `type` | 收藏类型，常用值：`1` 想看、`2` 看过、`3` 在看 |
+| `offset` | 分页偏移 |
+| `limit` | 分页大小，前端默认 `30` |
 
-返回示例：
-
-```json
-{
-  "data": [
-    {
-      "subject": {
-        "id": 576351,
-        "name": "Kuroneko to Majo no Kyoushitsu",
-        "nameCn": "黑猫与魔女的教室"
-      }
-    }
-  ],
-  "total": 86,
-  "limit": 30,
-  "offset": 0
-}
-```
-
-说明：
-
-- 前端收藏分页直接依赖这个接口
-- 当 Bangumi Token 未配置或失效时，会返回 `401`
-
-### 获取单个 Bangumi 条目
+### 获取单个 subject
 
 ```http
 GET /api/bangumi/subjects/:id
 ```
 
----
+这里的 `:id` 必须是 Bangumi subject ID，不是 Mikan ID。
 
-## Mikan 搜索与详情
+## Mikan 相关
 
-### 搜索 Mikan 条目
+### 搜索条目
 
 ```http
 GET /api/mikan/search?q=黑猫与魔女的教室
 ```
 
-### 获取 Mikan 番剧详情
+### 获取番剧详情
 
-兼容路径：
+兼容两条路径：
 
 ```http
 GET /api/mikan/bangumi/:id
 GET /api/mikan/bangumi-detail/:id
 ```
-
-当前前端使用的是 `bangumi-detail` 路径。
 
 返回重点字段：
 
@@ -85,6 +57,8 @@ GET /api/mikan/bangumi-detail/:id
 {
   "mikanId": 3928,
   "title": "黑猫与魔女的教室",
+  "bangumiSubjectId": 576351,
+  "bangumiTvUrl": "https://bgm.tv/subject/576351",
   "subgroups": [
     {
       "id": 370,
@@ -105,10 +79,8 @@ GET /api/mikan/bangumi-detail/:id
 
 说明：
 
-- 服务端会把旧格式的 `latestEpisodeTitle/latestUpdatedAt` 自动归一化成 `episodes[]`
-- 响应头带 `Cache-Control: no-store`，用于降低前端拿到旧资源列表的概率
-
----
+- 服务端会把旧结构统一归一化为 `episodes[]`
+- 返回 `bangumiSubjectId`，供前端和导入器显式区分两套 ID
 
 ## 高层订阅接口
 
@@ -119,112 +91,124 @@ POST /api/subscriptions
 Content-Type: application/json
 ```
 
-这个接口不是简单地新增一条 RSS 源，而是“按前端订阅动作”统一处理：
+这个接口会同时处理：
 
-- 创建或更新 RSS 源
+- 创建或更新 `rss_sources`
 - 同步 include / exclude 规则
-- 兼容字幕组订阅与手动 RSS 订阅两种路径
+- 刷新调度器
+- 重新触发相关历史条目的 replay
 
-### 字幕组订阅示例
+### 推荐的 Mikan 订阅载荷
 
 ```json
 {
-  "bangumiId": 576351,
-  "mikanId": "3928",
+  "bangumiSubjectId": 576351,
+  "mikanBangumiId": 3928,
   "subgroupName": "LoliHouse",
   "rssUrl": "https://mikanani.me/RSS/Bangumi?bangumiId=3928&subgroupid=370",
   "regexInclude": "1080p",
-  "regexExclude": "720p",
-  "episodeOffset": 0
+  "regexExclude": "720p"
 }
 ```
 
-### 手动 RSS 订阅示例
+### 推荐的手动 RSS 订阅载荷
 
 ```json
 {
-  "bangumiId": 576351,
-  "mikanId": null,
+  "bangumiSubjectId": 576351,
+  "mikanBangumiId": null,
   "rssUrl": "https://example.com/manual.xml",
   "regexInclude": "1080p",
   "regexExclude": "720p"
 }
 ```
 
-### 手动 RSS 更新示例
+### 更新已有订阅
 
 ```json
 {
-  "bangumiId": 576351,
-  "mikanId": null,
   "sourceId": 12,
+  "bangumiSubjectId": 576351,
+  "mikanBangumiId": null,
   "rssUrl": "https://example.com/manual-updated.xml",
   "regexInclude": "2160p"
 }
 ```
 
-返回示例：
+### 兼容字段
+
+当前后端仍接受旧字段：
+
+- `bangumiId`
+- `mikanId`
+
+但它们只用于兼容旧客户端，新的调用方应始终发送：
+
+- `bangumiSubjectId`
+- `mikanBangumiId`
+
+### 订阅预览接口
+
+```http
+POST /api/subscriptions/preview-rss
+Content-Type: application/json
+```
+
+请求体示例：
 
 ```json
 {
-  "success": true,
-  "updated": true,
-  "source": {
-    "id": 12,
-    "name": "Manual RSS - 576351",
-    "url": "https://example.com/manual-updated.xml"
-  }
+  "url": "https://example.com/feed.xml",
+  "regexInclude": "LoliHouse 1080p",
+  "regexExclude": "720p"
 }
 ```
 
-说明：
+返回包含：
 
-- 当 `mikanId` 和 `subgroupName` 存在时，会创建字幕组命名的订阅源
-- 当 `mikanId` 为 `null` 时，会走手动 RSS 路径，源名称格式为 `Manual RSS - {bangumiId}`
-- 如果传入 `sourceId`，接口会尝试更新已有源，而不是重复创建
+- `matched`
+- `matchedGroups`
+- `excluded`
 
----
+## 低层 RSS 源接口
 
-## RSS 源管理
-
-`/api/rss` 是低层 CRUD 接口，前端目前主要用它来读取已有订阅源、计算“已订阅”状态，以及回填手动 RSS。
-
-### 获取所有 RSS 源
+### 获取源列表
 
 ```http
 GET /api/rss
+GET /api/rss/:id
 ```
 
-### 添加 RSS 源
+### 创建源
 
 ```http
 POST /api/rss
 Content-Type: application/json
 
 {
-  "name": "黑猫与魔女的教室",
-  "url": "https://mikanani.me/RSS/Bangumi?bangumiId=3928",
+  "name": "Manual RSS - 576351",
+  "url": "https://example.com/feed.xml",
   "enabled": true,
   "pollIntervalMs": 300000,
-  "bangumiSubjectId": 576351
+  "bangumiSubjectId": 576351,
+  "mikanBangumiId": null
 }
 ```
 
-### 更新 / 删除 RSS 源
+### 更新或删除源
 
 ```http
 PATCH /api/rss/:id
 DELETE /api/rss/:id
 ```
 
----
+## 过滤规则接口
 
-## 过滤规则管理
-
-### 获取所有规则
+### 获取规则
 
 ```http
 GET /api/rules
+GET /api/rules/:id
 ```
 
 ### 创建规则
@@ -235,61 +219,42 @@ Content-Type: application/json
 
 {
   "name": "LoliHouse 1080p",
-  "pattern": "LoliHouse.*1080p",
+  "pattern": "LoliHouse 1080p",
   "mode": "include",
   "sourceId": 1,
   "enabled": true
 }
 ```
 
-说明：
+规则语义：
 
-- `mode` 取值为 `include` 或 `exclude`
+- `mode` 为 `include` 或 `exclude`
 - `sourceId` 为空时表示全局规则
-- 手动 RSS 回填功能会通过 `GET /api/rules` 查找对应源上的 include / exclude 规则
+- 新建、更新、删除规则都会重新触发历史 replay
 
-### 更新 / 删除规则
+### 更新或删除规则
 
 ```http
 PATCH /api/rules/:id
 DELETE /api/rules/:id
 ```
 
----
-
-## 配置管理
-
-### 获取当前配置
+## 配置接口
 
 ```http
 GET /api/config
-```
-
-### 更新配置
-
-```http
 PATCH /api/config
-Content-Type: application/json
-
-{
-  "rename": { "method": "advance" }
-}
+POST /api/config/export
+POST /api/config/import
 ```
 
----
+`PATCH /api/config` 和 `POST /api/config/import` 会在服务端重新初始化 Bangumi 和 TMDB 客户端。
 
-## 下载任务与弹幕
-
-### 获取任务
+## 任务接口
 
 ```http
 GET /api/tasks
-GET /api/tasks/:id
+GET /api/tasks?status=renamed
 ```
 
-### 弹幕下载
-
-```http
-POST /api/danmaku/download
-GET /api/danmaku
-```
+当前只提供列表接口，没有 `GET /api/tasks/:id`。

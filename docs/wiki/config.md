@@ -90,8 +90,22 @@
 | `appId` | string | `""` | DanDanPlay API appId |
 | `appSecret` | string | `""` | DanDanPlay API appSecret |
 | `chConvert` | `0` \| `1` \| `2` | `1` | 繁简转换（0=不转，1=转简体，2=转繁体） |
+| `refreshIntervalDays` | number | `7` | 已有 XML 视为过期前的天数 |
 
 > 申请 DanDanPlay API：https://www.dandanplay.com/
+
+---
+
+## `bangumi` — Bangumi 设置
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `token` | string | `""` | Bangumi API Token，用于收藏看板和 subject 详情查询 |
+
+说明：
+
+- `CollectionBoard` 读取收藏列表依赖该 token
+- `advance` 重命名模式在源已绑定 `bangumiSubjectId` 时也会用它读取官方标题与年份
 
 ---
 
@@ -105,3 +119,9 @@
 > 申请 TMDB API Key：https://www.themoviedb.org/settings/api
 >
 > 支持语言：`zh-CN`（简体中文）、`zh-TW`（繁体中文）、`en-US`（英文）、`ja-JP`（日文）
+
+## 优先级与运行时行为
+
+- 配置修改通过 `PATCH /api/config` 即时生效
+- 更新 `tmdb` 或 `bangumi` 配置时，服务端会重新初始化对应客户端
+- `general.dbPath` 和 `pikpak.tokenCachePath` 默认位于 `data/` 下，属于运行时文件，不进入 git
