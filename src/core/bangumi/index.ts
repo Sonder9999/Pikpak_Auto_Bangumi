@@ -1,11 +1,15 @@
 export {
+  getEpisodes,
+  getSubjectRelations,
   BangumiRequestError,
   getCollections,
   getSubject,
   initBangumi,
   isBangumiConfigured,
+  type BangumiEpisode,
   type BangumiCollection,
   type BangumiCollectionPage,
   type BangumiImageSet,
   type BangumiSubject,
+  type BangumiSubjectRelation,
 } from "./client.ts";

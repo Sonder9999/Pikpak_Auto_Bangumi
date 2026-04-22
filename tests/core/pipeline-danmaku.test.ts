@@ -22,6 +22,24 @@ function initTestDb() {
     xml_file_id TEXT,
     downloaded_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+  db.run(sql`CREATE TABLE IF NOT EXISTS episode_delivery_state (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    normalized_title TEXT NOT NULL,
+    season_number INTEGER NOT NULL,
+    episode_number INTEGER NOT NULL,
+    cloud_path TEXT NOT NULL,
+    video_status TEXT NOT NULL DEFAULT 'missing',
+    video_file_name TEXT,
+    video_file_id TEXT,
+    video_verified_at TEXT,
+    danmaku_status TEXT NOT NULL DEFAULT 'pending',
+    danmaku_uploaded_at TEXT,
+    danmaku_checked_at TEXT,
+    xml_file_name TEXT,
+    xml_file_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
   return db;
 }
 

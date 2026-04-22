@@ -32,6 +32,67 @@ const episodeDeliveryStateTable = sqliteTable("episode_delivery_state", {
   updatedAt: text("updated_at").notNull(),
 });
 
+function mockBangumiSubject(
+  subjectId: number,
+  subject: {
+    name: string;
+    name_cn?: string | null;
+    date?: string | null;
+    eps?: number | null;
+  }
+) {
+  mockBangumiApi({
+    subjects: {
+      [subjectId]: subject,
+    },
+  });
+}
+
+function mockBangumiApi({
+  subjects,
+  relations = {},
+}: {
+  subjects: Record<number, { name: string; name_cn?: string | null; date?: string | null; eps?: number | null }>;
+  relations?: Record<number, Array<{ id: number; type?: number | null; name: string; name_cn?: string | null; relation: string }>>;
+}) {
+  globalThis.fetch = mock(async (input) => {
+    const url = String(input);
+
+    for (const [rawSubjectId, payload] of Object.entries(relations)) {
+      const subjectId = Number(rawSubjectId);
+      if (url.includes(`/subjects/${subjectId}/subjects`)) {
+        return new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    for (const [rawSubjectId, payload] of Object.entries(subjects)) {
+      const subjectId = Number(rawSubjectId);
+      if (url.includes(`/subjects/${subjectId}`)) {
+        return new Response(JSON.stringify({
+          id: subjectId,
+          name: payload.name,
+          name_cn: payload.name_cn ?? null,
+          date: payload.date ?? null,
+          images: { large: "https://lain.bgm.tv/pic/cover/l/example.jpg" },
+          rating: { score: 7.4, total: 1499 },
+          tags: [],
+          summary: "summary",
+          eps: payload.eps ?? 12,
+          url: `https://bgm.tv/subject/${subjectId}`,
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    throw new Error(`Unexpected Bangumi request: ${url}`);
+  }) as typeof fetch;
+}
+
 function initTestDb() {
   const db = getDb(":memory:");
   db.run(sql`CREATE TABLE IF NOT EXISTS rss_sources (
@@ -388,6 +449,142 @@ describe("Pipeline replay regression coverage", () => {
       .where(eq(episodeDeliveryStateTable.normalizedTitle, "seedanime"))
       .get();
     expect(seeded).toMatchObject({ normalizedTitle: "seedanime", seasonNumber: 1, episodeNumber: 1, videoStatus: "delivered" });
+  });
+
+  test("bound sequel uses season 2 folder and duplicate identity even when raw title uses bare numeral", async () => {
+    updateConfig({
+      bangumi: { token: "bangumi-token" },
+      rename: {
+        enabled: true,
+        method: "advance",
+        template: "{title} S{season}E{episode}.{ext}",
+        folderPattern: "{title} ({year})/Season {season}",
+      },
+    });
+    initBangumi("bangumi-token");
+    mockBangumiSubject(200001, {
+      name: "Otonari no Tenshi-sama 2",
+      name_cn: "关于邻家的天使大人不知不觉把我惯成了废人这档子事 第二季",
+      date: "2026-01-10",
+    });
+
+    const source = createSource({
+      name: "Bound Sequel Feed",
+      url: "https://example.com/otonari-rss",
+      bangumiSubjectId: 200001,
+    });
+    createRule({ name: "Match sequel", pattern: "Otonari", mode: "include", sourceId: source.id });
+
+    storeNewItems(source.id, [
+      {
+        title: "[Dynamis One] Otonari no Tenshi-sama 2 - 01 (CR 1920x1080 AVC AAC MKV) [0512B487].mkv",
+        guid: "otonari-guid-01",
+        link: "https://example.com/otonari-01",
+        magnetUrl: "magnet:?xt=urn:btih:otonari01",
+        torrentUrl: null,
+        homepage: null,
+      },
+    ]);
+
+    const pipelineModule = await import("../../src/core/pipeline.ts") as Record<string, any>;
+    const replayStoredItems = pipelineModule.replayStoredItems;
+
+    expect(typeof replayStoredItems).toBe("function");
+    if (typeof replayStoredItems !== "function") return;
+
+    const pikpak = createMockPikPakClient({
+      "folder:Season 02": [
+        {
+          id: "existing_otonari_s02e01",
+          name: "关于邻家的天使大人不知不觉把我惯成了废人这档子事 第二季 S02E01.mkv",
+        },
+      ],
+    });
+
+    const result = await replayStoredItems(pikpak, { sourceId: source.id, trigger: "startup" });
+    const folderNames = pikpak.ensureFolder.mock.calls.map((call: [string, string]) => call[1]);
+
+    expect(folderNames).toContain("Season 02");
+    expect(result.submitted).toBe(0);
+    expect(pikpak.offlineDownload).not.toHaveBeenCalled();
+  });
+
+  test("bound cumulative numbering uses season-local duplicate identity when Bangumi prequel chain is reliable", async () => {
+    updateConfig({
+      bangumi: { token: "bangumi-token" },
+      rename: {
+        enabled: true,
+        method: "advance",
+        template: "{title} S{season}E{episode}.{ext}",
+        folderPattern: "{title} ({year})/Season {season}",
+      },
+    });
+    initBangumi("bangumi-token");
+    mockBangumiApi({
+      subjects: {
+        200006: {
+          name: "Himesama Goumon no Jikan desu 2nd Season",
+          date: "2026-01-10",
+          eps: 12,
+        },
+        200007: {
+          name: "Himesama Goumon no Jikan desu",
+          date: "2024-01-10",
+          eps: 12,
+        },
+      },
+      relations: {
+        200006: [
+          {
+            id: 200007,
+            type: 2,
+            name: "Himesama Goumon no Jikan desu",
+            relation: "前传",
+          },
+        ],
+        200007: [],
+      },
+    });
+
+    const source = createSource({
+      name: "Bound Cumulative Feed",
+      url: "https://example.com/himesama-rss",
+      bangumiSubjectId: 200006,
+    });
+    createRule({ name: "Match cumulative", pattern: "Himesama", mode: "include", sourceId: source.id });
+
+    storeNewItems(source.id, [
+      {
+        title: "[Dynamis One] Himesama _Goumon_ no Jikan desu 2nd Season - 17 (CR 1920x1080 AVC AAC MKV) [6C2F2AAC].mkv",
+        guid: "himesama-guid-17",
+        link: "https://example.com/himesama-17",
+        magnetUrl: "magnet:?xt=urn:btih:himesama17",
+        torrentUrl: null,
+        homepage: null,
+      },
+    ]);
+
+    const pipelineModule = await import("../../src/core/pipeline.ts") as Record<string, any>;
+    const replayStoredItems = pipelineModule.replayStoredItems;
+
+    expect(typeof replayStoredItems).toBe("function");
+    if (typeof replayStoredItems !== "function") return;
+
+    const pikpak = createMockPikPakClient({
+      "folder:Season 02": [
+        {
+          id: "existing_himesama_s02e05",
+          name: "Himesama Goumon no Jikan desu 2nd Season S02E05.mkv",
+        },
+      ],
+    });
+
+    const result = await replayStoredItems(pikpak, { sourceId: source.id, trigger: "startup" });
+    const folderNames = pikpak.ensureFolder.mock.calls.map((call: [string, string]) => call[1]);
+
+    expect(folderNames).toContain("Season 02");
+    expect(result.submitted).toBe(0);
+    expect(pikpak.offlineDownload).not.toHaveBeenCalled();
   });
 
   test("replay does not query Bangumi when a source only has Mikan identity", async () => {

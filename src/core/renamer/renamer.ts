@@ -2,8 +2,7 @@ import { createLogger } from "../logger.ts";
 import { getConfig } from "../config/config.ts";
 import type { PikPakClient } from "../pikpak/client.ts";
 import { getTasksByStatus, updateTaskStatus } from "../pikpak/task-manager.ts";
-import { rawParser } from "../parser/raw-parser.ts";
-import { getSubject } from "../bangumi/index.ts";
+import { resolveCanonicalEpisode } from "../season-resolution/resolver.ts";
 import { getSourceByRssItemId } from "../rss/source-crud.ts";
 import { searchAnime } from "../tmdb/index.ts";
 import { buildEpisodeDeliveryKey, buildEpisodeIdentity } from "../episode-state/matching.ts";
@@ -65,26 +64,20 @@ export async function buildRenamedName(
   options: BuildRenameOptions = {}
 ): Promise<{ name: string; episode: Episode } | null> {
   const config = getConfig();
-  const ep = rawParser(originalName);
+  const { episode: ep, subject } = await resolveCanonicalEpisode(originalName, options);
   if (!ep || ep.episode <= 0) {
     logger.warn("Cannot parse episode metadata for rename", { originalName });
     return null;
-  }
-
-  // Default season=1 if not found
-  if (ep.season <= 0) {
-    ep.season = 1;
   }
 
   // Bangumi metadata takes precedence when a source is explicitly bound.
   if (config.rename.method === "advance") {
     let resolvedByBangumi = false;
 
-    if (options.bangumiSubjectId !== null && options.bangumiSubjectId !== undefined) {
-      const subject = await getSubject(options.bangumiSubjectId);
+    if (subject) {
       const bangumiTitle = subject?.nameCn?.trim() || subject?.name?.trim() || null;
 
-      if (subject && bangumiTitle) {
+      if (bangumiTitle) {
         ep.nameEn = bangumiTitle;
         ep.nameZh = subject.nameCn ?? ep.nameZh ?? null;
         ep.nameJp = subject.name ?? ep.nameJp ?? null;
@@ -96,6 +89,11 @@ export async function buildRenamedName(
           year: subject.year,
         });
       }
+    } else if (options.bangumiSubjectId !== null && options.bangumiSubjectId !== undefined) {
+      logger.debug("Bound Bangumi subject metadata unavailable for rename", {
+        bangumiSubjectId: options.bangumiSubjectId,
+        originalName,
+      });
     } else if (options.mikanBangumiId) {
       logger.debug("Skipping Bangumi metadata lookup for rename because only Mikan identity is available", {
         mikanBangumiId: options.mikanBangumiId,

@@ -144,6 +144,33 @@ RSS 拉取
 
 这使得 Mikan-only source 不会把 Mikan ID 错当成 Bangumi subject 去查询。
 
+### 权威季号与集号解析
+
+当 source 已绑定 `bangumiSubjectId` 时，运行时会先生成一份 canonical season/episode 结果，并把它复用于同一条链路上的所有消费者：
+
+1. 先用原始标题解析基础季号与集号，支持 `Sxx`、裸续作数字、`2nd Season` 这类英文序数季名，以及中文 `第X季`
+2. 如果绑定的 Bangumi subject 自身已经带季号信息，则以它覆盖原始标题里的冲突季号
+3. 如果当前条目存在可靠的单前传链，且前传集数明确，则会把累计集号归一成当前季内集号
+4. 如果 Bangumi 上下文不完整、前传链不唯一，或者缺少可信的集数信息，则保守回退到原始标题解析结果，不做猜测性改写
+
+这份 canonical 结果会同时驱动：
+
+- 重命名模板中的 `SxxEyy`
+- `Season xx` 文件夹规划
+- `episode_delivery_state` 的重复判定键
+- 重命名后触发的弹幕季号输入
+
+因此，绑定了正确的 Bangumi subject 之后，同一季不会再因为不同标题格式被拆进多个 `Season xx` 目录，重复判定也不会再把同一集识别成不同季。
+
+## Season Resolution 变更流程
+
+涉及季号解析的变更必须保持 test-first：
+
+1. 先补样例矩阵，至少覆盖 `Sxx`、裸续作数字、英文序数季名、累计集号
+2. 先把 focused parser、renamer、pipeline 回归跑通，再开始改实现
+3. 实现后回跑同一组 focused suite；如果还要扩行为，再补相邻测试后继续回归
+4. 能做安全 replay 或 copied-db 验证时，再补一轮真实链路确认，避免只在单元测试里成立
+
 ## qBit 导入器在整体架构中的位置
 
 qBit 导入器属于“离线批量建模”能力：

@@ -14,6 +14,7 @@ import { getSourceById } from "./rss/source-crud.ts";
 import { setNewItemHandler, startScheduler, stopScheduler } from "./rss/scheduler.ts";
 import { backfillDanmakuForRenamedTasks, downloadDanmaku } from "./danmaku/service.ts";
 import { searchAnime, initTmdb } from "./tmdb/index.ts";
+import { resolveCanonicalEpisode } from "./season-resolution/resolver.ts";
 import type { PikPakClient } from "./pikpak/client.ts";
 
 const logger = createLogger("pipeline");
@@ -103,7 +104,10 @@ export async function initCore(configPath?: string): Promise<boolean> {
 async function resolveParentFolderId(client: PikPakClient, item: StoredRssItem, baseId: string): Promise<string> {
   const config = getConfig();
   const source = getSourceById(item.sourceId);
-  const ep = rawParser(item.title);
+  const { episode: ep, subject } = await resolveCanonicalEpisode(item.title, {
+    bangumiSubjectId: source?.bangumiSubjectId ?? null,
+    mikanBangumiId: source?.mikanBangumiId ?? null,
+  });
   if (!ep || !config.rename.enabled || config.rename.method === "none") {
     return baseId;
   }
@@ -115,11 +119,10 @@ async function resolveParentFolderId(client: PikPakClient, item: StoredRssItem, 
   if (config.rename.method === "advance") {
     let resolvedByBangumi = false;
 
-    if (source?.bangumiSubjectId !== null && source?.bangumiSubjectId !== undefined) {
-      const subject = await getSubject(source.bangumiSubjectId);
+    if (subject) {
       const bangumiTitle = subject?.nameCn?.trim() || subject?.name?.trim() || null;
 
-      if (subject && bangumiTitle) {
+      if (bangumiTitle) {
         title = bangumiTitle;
         year = subject.year ?? "";
         ep.year = subject.year;
@@ -131,6 +134,11 @@ async function resolveParentFolderId(client: PikPakClient, item: StoredRssItem, 
           year,
         });
       }
+    } else if (source?.bangumiSubjectId !== null && source?.bangumiSubjectId !== undefined) {
+      logger.debug("Bound Bangumi subject metadata unavailable for folder planning", {
+        sourceId: item.sourceId,
+        bangumiSubjectId: source.bangumiSubjectId,
+      });
     } else if (source?.mikanBangumiId) {
       logger.debug("Skipping Bangumi metadata lookup because source only has Mikan identity", {
         sourceId: item.sourceId,
@@ -173,13 +181,17 @@ async function buildEpisodePreflightPlan(
   baseId: string
 ): Promise<EpisodePreflightPlan> {
   const config = getConfig();
+  const source = getSourceById(item.sourceId);
   const parentId = await resolveParentFolderId(client, item, baseId);
-  const parsed = rawParser(item.title);
+  const canonical = await resolveCanonicalEpisode(item.title, {
+    bangumiSubjectId: source?.bangumiSubjectId ?? null,
+    mikanBangumiId: source?.mikanBangumiId ?? null,
+  });
+  const parsed = canonical.episode ?? rawParser(item.title);
   let identity = buildEpisodeIdentity(parsed);
   let expectedVideoName: string | null = item.title;
 
   if (config.rename.enabled && config.rename.method !== "none") {
-    const source = getSourceById(item.sourceId);
     const renameInfo = await buildRenamedName(item.title, {
       bangumiSubjectId: source?.bangumiSubjectId ?? null,
       mikanBangumiId: source?.mikanBangumiId ?? null,

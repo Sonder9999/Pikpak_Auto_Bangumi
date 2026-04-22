@@ -52,6 +52,25 @@ interface BangumiCollectionPayload {
   subject?: BangumiSubjectPayload | null;
 }
 
+interface BangumiSubjectRelationPayload {
+  id: number;
+  type?: number | null;
+  name?: string | null;
+  name_cn?: string | null;
+  relation?: string | null;
+}
+
+interface BangumiEpisodePayload {
+  id: number;
+  type?: number | null;
+  name?: string | null;
+  name_cn?: string | null;
+  sort?: number | null;
+  ep?: number | null;
+  airdate?: string | null;
+  subject_id?: number | null;
+}
+
 export interface BangumiImageSet {
   large: string | null;
   common: string | null;
@@ -87,6 +106,25 @@ export interface BangumiSubject {
 export interface BangumiCollection {
   type: number;
   subject: BangumiSubject;
+}
+
+export interface BangumiSubjectRelation {
+  id: number;
+  type: number | null;
+  name: string;
+  nameCn: string | null;
+  relation: string;
+}
+
+export interface BangumiEpisode {
+  id: number;
+  type: number;
+  name: string;
+  nameCn: string | null;
+  sort: number;
+  ep: number | null;
+  airdate: string | null;
+  subjectId: number | null;
 }
 
 export class BangumiRequestError extends Error {
@@ -192,6 +230,29 @@ function mapSubject(subject: BangumiSubjectPayload): BangumiSubject {
   };
 }
 
+function mapSubjectRelation(relation: BangumiSubjectRelationPayload): BangumiSubjectRelation {
+  return {
+    id: relation.id,
+    type: typeof relation.type === "number" ? relation.type : null,
+    name: relation.name?.trim() || `subject-${relation.id}`,
+    nameCn: relation.name_cn?.trim() || null,
+    relation: relation.relation?.trim() || "",
+  };
+}
+
+function mapEpisode(episode: BangumiEpisodePayload): BangumiEpisode {
+  return {
+    id: episode.id,
+    type: typeof episode.type === "number" ? episode.type : 0,
+    name: episode.name?.trim() || `episode-${episode.id}`,
+    nameCn: episode.name_cn?.trim() || null,
+    sort: typeof episode.sort === "number" ? episode.sort : 0,
+    ep: typeof episode.ep === "number" ? episode.ep : null,
+    airdate: episode.airdate?.trim() || null,
+    subjectId: typeof episode.subject_id === "number" ? episode.subject_id : null,
+  };
+}
+
 export async function getCollections(type = 3, offset = 0, limit = 30): Promise<BangumiCollectionPage | null> {
   if (!isBangumiConfigured()) {
     logger.debug("Bangumi collections skipped: no token configured");
@@ -259,6 +320,48 @@ export async function getSubject(subjectId: number): Promise<BangumiSubject | nu
   } catch (error) {
     if (error instanceof BangumiRequestError && error.status === 404) {
       logger.warn("Bangumi subject not found", { subjectId });
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function getSubjectRelations(subjectId: number): Promise<BangumiSubjectRelation[] | null> {
+  if (!isBangumiConfigured()) {
+    logger.debug("Bangumi subject relations skipped: no token configured", { subjectId });
+    return null;
+  }
+
+  try {
+    const response = await fetchBangumi(`/subjects/${subjectId}/subjects`);
+    const payload = (await response.json()) as BangumiSubjectRelationPayload[];
+    return (payload ?? [])
+      .filter((relation): relation is BangumiSubjectRelationPayload => Boolean(relation?.id))
+      .map(mapSubjectRelation);
+  } catch (error) {
+    if (error instanceof BangumiRequestError && error.status === 404) {
+      logger.warn("Bangumi subject relations not found", { subjectId });
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function getEpisodes(subjectId: number, limit = 100): Promise<BangumiEpisode[] | null> {
+  if (!isBangumiConfigured()) {
+    logger.debug("Bangumi episodes skipped: no token configured", { subjectId });
+    return null;
+  }
+
+  try {
+    const response = await fetchBangumi(`/episodes?subject_id=${subjectId}&type=0&limit=${limit}`);
+    const payload = (await response.json()) as { data?: BangumiEpisodePayload[] | null };
+    return (payload.data ?? [])
+      .filter((episode): episode is BangumiEpisodePayload => Boolean(episode?.id))
+      .map(mapEpisode);
+  } catch (error) {
+    if (error instanceof BangumiRequestError && error.status === 404) {
+      logger.warn("Bangumi episodes not found", { subjectId });
       return null;
     }
     throw error;

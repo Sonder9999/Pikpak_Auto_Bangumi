@@ -10,6 +10,67 @@ import type { Episode } from "../../src/core/parser/types.ts";
 const TEST_CONFIG_PATH = "data/test-renamer-config.json";
 const originalFetch = globalThis.fetch;
 
+function mockBangumiSubject(
+  subjectId: number,
+  subject: {
+    name: string;
+    name_cn?: string | null;
+    date?: string | null;
+    eps?: number | null;
+  }
+) {
+  mockBangumiApi({
+    subjects: {
+      [subjectId]: subject,
+    },
+  });
+}
+
+function mockBangumiApi({
+  subjects,
+  relations = {},
+}: {
+  subjects: Record<number, { name: string; name_cn?: string | null; date?: string | null; eps?: number | null }>;
+  relations?: Record<number, Array<{ id: number; type?: number | null; name: string; name_cn?: string | null; relation: string }>>;
+}) {
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+
+    for (const [rawSubjectId, payload] of Object.entries(relations)) {
+      const subjectId = Number(rawSubjectId);
+      if (url.includes(`/subjects/${subjectId}/subjects`)) {
+        return new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    for (const [rawSubjectId, payload] of Object.entries(subjects)) {
+      const subjectId = Number(rawSubjectId);
+      if (url.includes(`/subjects/${subjectId}`)) {
+        return new Response(JSON.stringify({
+          id: subjectId,
+          name: payload.name,
+          name_cn: payload.name_cn ?? null,
+          date: payload.date ?? null,
+          images: { large: "https://lain.bgm.tv/pic/cover/l/example.jpg" },
+          rating: { score: 7.4, total: 1499 },
+          tags: [],
+          summary: "summary",
+          eps: payload.eps ?? 12,
+          url: `https://bgm.tv/subject/${subjectId}`,
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    throw new Error(`Unexpected Bangumi request: ${url}`);
+  }) as typeof fetch;
+}
+
 function initTestDb() {
   const db = getDb(":memory:");
   db.run(sql`CREATE TABLE IF NOT EXISTS rss_sources (
@@ -150,25 +211,11 @@ describe("buildRenamedName", () => {
     initBangumi("bangumi-token");
     updateConfig({ bangumi: { token: "bangumi-token" } });
 
-    globalThis.fetch = (async (input) => {
-      expect(String(input)).toContain("/subjects/576351");
-
-      return new Response(JSON.stringify({
-        id: 576351,
-        name: "Kuroneko to Majo no Kyoushitsu",
-        name_cn: "黑猫与魔女的教室",
-        date: "2026-04-12",
-        images: { large: "https://lain.bgm.tv/pic/cover/l/example.jpg" },
-        rating: { score: 7.4, total: 1499 },
-        tags: [],
-        summary: "summary",
-        eps: 12,
-        url: "https://bgm.tv/subject/576351",
-      }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    }) as typeof fetch;
+    mockBangumiSubject(576351, {
+      name: "Kuroneko to Majo no Kyoushitsu",
+      name_cn: "黑猫与魔女的教室",
+      date: "2026-04-12",
+    });
 
     const result = await buildRenamedName(
       "[SubGroup] Kuroneko to Majo no Kyoushitsu - 02 [1080P].mkv",
@@ -178,5 +225,102 @@ describe("buildRenamedName", () => {
     expect(result).not.toBeNull();
     expect(result!.name).toContain("黑猫与魔女的教室");
     expect(result!.episode.year).toBe("2026");
+  });
+
+  test("bound bare numeral sequel keeps canonical season for downstream consumers", async () => {
+    initBangumi("bangumi-token");
+    updateConfig({ bangumi: { token: "bangumi-token" } });
+    mockBangumiSubject(200001, {
+      name: "Otonari no Tenshi-sama 2",
+      name_cn: "关于邻家的天使大人不知不觉把我惯成了废人这档子事 第二季",
+      date: "2026-01-10",
+    });
+
+    const result = await buildRenamedName(
+      "[Dynamis One] Otonari no Tenshi-sama 2 - 01 (CR 1920x1080 AVC AAC MKV) [0512B487].mkv",
+      { bangumiSubjectId: 200001 }
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.episode.season).toBe(2);
+    expect(result!.name).toContain("S02E01");
+  });
+
+  test("bound ordinal english season title exposes season to rename and danmaku consumers", async () => {
+    initBangumi("bangumi-token");
+    updateConfig({ bangumi: { token: "bangumi-token" } });
+    mockBangumiSubject(200004, {
+      name: "Mairimashita! Iruma-kun 4th Season",
+      name_cn: "入间同学入魔了 第四季",
+      date: "2026-10-03",
+    });
+
+    const result = await buildRenamedName(
+      "[Dynamis One] Mairimashita! Iruma-kun 4th Season - 02 (CR 1920x1080 AVC AAC MKV) [827D2187].mkv",
+      { bangumiSubjectId: 200004 }
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.episode.season).toBe(4);
+    expect(result!.name).toContain("S04E02");
+  });
+
+  test("bound Bangumi subject overrides contradictory raw season cue", async () => {
+    initBangumi("bangumi-token");
+    updateConfig({ bangumi: { token: "bangumi-token" } });
+    mockBangumiSubject(200005, {
+      name: "Example Anime 2nd Season",
+      name_cn: "示例动画 第二季",
+      date: "2026-07-01",
+    });
+
+    const result = await buildRenamedName(
+      "[SubGroup] Example Anime S01E03 [1080P].mkv",
+      { bangumiSubjectId: 200005 }
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.episode.season).toBe(2);
+    expect(result!.name).toContain("S02E03");
+  });
+
+  test("bound cumulative numbering normalizes to season-local episode when Bangumi prequel chain is unambiguous", async () => {
+    initBangumi("bangumi-token");
+    updateConfig({ bangumi: { token: "bangumi-token" } });
+    mockBangumiApi({
+      subjects: {
+        200006: {
+          name: "Himesama Goumon no Jikan desu 2nd Season",
+          date: "2026-01-10",
+          eps: 12,
+        },
+        200007: {
+          name: "Himesama Goumon no Jikan desu",
+          date: "2024-01-10",
+          eps: 12,
+        },
+      },
+      relations: {
+        200006: [
+          {
+            id: 200007,
+            type: 2,
+            name: "Himesama Goumon no Jikan desu",
+            relation: "前传",
+          },
+        ],
+        200007: [],
+      },
+    });
+
+    const result = await buildRenamedName(
+      "[Dynamis One] Himesama _Goumon_ no Jikan desu 2nd Season - 17 (CR 1920x1080 AVC AAC MKV) [6C2F2AAC].mkv",
+      { bangumiSubjectId: 200006 }
+    );
+
+    expect(result).not.toBeNull();
+    expect(result!.episode.season).toBe(2);
+    expect(result!.episode.episode).toBe(5);
+    expect(result!.name).toContain("S02E05");
   });
 });

@@ -33,6 +33,101 @@ const CHINESE_NUMBER_MAP: Record<string, number> = {
   "\u5341": 10,
 };
 
+function parseChineseSeasonNumber(raw: string): number | null {
+  const normalized = raw.replace(/\s+/g, "").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = parseInt(normalized, 10);
+  if (!Number.isNaN(parsed)) {
+    return parsed;
+  }
+
+  if (CHINESE_NUMBER_MAP[normalized] !== undefined) {
+    return CHINESE_NUMBER_MAP[normalized]!;
+  }
+
+  if (normalized === "十") {
+    return 10;
+  }
+
+  if (normalized.startsWith("十") && normalized.length === 2) {
+    const ones = CHINESE_NUMBER_MAP[normalized[1]!];
+    return ones === undefined ? null : 10 + ones;
+  }
+
+  if (normalized.endsWith("十") && normalized.length === 2) {
+    const tens = CHINESE_NUMBER_MAP[normalized[0]!];
+    return tens === undefined ? null : tens * 10;
+  }
+
+  if (normalized.length === 3 && normalized[1] === "十") {
+    const tens = CHINESE_NUMBER_MAP[normalized[0]!];
+    const ones = CHINESE_NUMBER_MAP[normalized[2]!];
+    if (tens === undefined || ones === undefined) {
+      return null;
+    }
+    return tens * 10 + ones;
+  }
+
+  return null;
+}
+
+export function parseSeasonNumberFromText(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.replace(/[\[\]]/g, " ");
+
+  const sMatch = normalized.match(/\bS(\d{1,2})\b/i);
+  if (sMatch) {
+    return parseInt(sMatch[1]!, 10);
+  }
+
+  const seasonMatch = normalized.match(/\bSeason\s+(\d{1,2})(?:st|nd|rd|th)?\b/i);
+  if (seasonMatch) {
+    return parseInt(seasonMatch[1]!, 10);
+  }
+
+  const ordinalSeasonMatch = normalized.match(/\b(\d{1,2})(?:st|nd|rd|th)\s+Season\b/i);
+  if (ordinalSeasonMatch) {
+    return parseInt(ordinalSeasonMatch[1]!, 10);
+  }
+
+  const chineseSeasonMatch = normalized.match(/第\s*([一二三四五六七八九十\d]+)\s*[季期篇]/);
+  if (chineseSeasonMatch) {
+    return parseChineseSeasonNumber(chineseSeasonMatch[1]!);
+  }
+
+  const bareTrailingSeasonMatch = normalized.match(/(?:^|[\s/])([2-9]|1\d)\s*$/);
+  if (bareTrailingSeasonMatch) {
+    return parseInt(bareTrailingSeasonMatch[1]!, 10);
+  }
+
+  return null;
+}
+
+function stripSeasonCues(value: string, season: number, seasonRaw: string): string {
+  const withoutExplicitCues = value
+    .replace(/\bS\d{1,2}\b/gi, " ")
+    .replace(/\bSeason\s+\d{1,2}(?:st|nd|rd|th)?\b/gi, " ")
+    .replace(/\b\d{1,2}(?:st|nd|rd|th)\s+Season\b/gi, " ")
+    .replace(/第\s*[一二三四五六七八九十\d]+\s*[季期篇]/g, " ");
+
+  if (seasonRaw === String(season)) {
+    return withoutExplicitCues
+      .split("/")
+      .map((segment) => segment.replace(new RegExp(`\\s+${escapeRegex(seasonRaw)}\\s*$`), ""))
+      .join(" / ")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+  }
+
+  return withoutExplicitCues.replace(/\s{2,}/g, " ").trim();
+}
+
 function getGroup(name: string): string {
   const parts = name.split(/[\[\]]/);
   if (parts.length > 1) {
@@ -70,34 +165,27 @@ function seasonProcess(seasonInfo: string): {
   season: number;
 } {
   let nameSeason = seasonInfo;
-  const seasonRule = /S\d{1,2}|Season \d{1,2}|[第].[季期]/g;
   nameSeason = nameSeason.replace(/[\[\]]/g, " ");
-  const seasons = nameSeason.match(seasonRule);
+  const seasonNum = parseSeasonNumberFromText(nameSeason);
 
-  if (!seasons || seasons.length === 0) {
+  if (!seasonNum) {
     return { name: nameSeason, seasonRaw: "", season: 1 };
   }
 
-  const name = nameSeason.replace(seasonRule, "");
-  let seasonNum = 1;
-  let seasonRaw = "";
-
-  for (const s of seasons) {
-    seasonRaw = s;
-    if (/Season|S/.test(s)) {
-      seasonNum = parseInt(s.replace(/Season|S/, ""), 10);
-      break;
-    } else if (/[第 ].*[季期(部分)]|部分/.test(s)) {
-      const seasonPro = s.replace(/[第季期 ]/g, "");
-      const parsed = parseInt(seasonPro, 10);
-      if (!isNaN(parsed)) {
-        seasonNum = parsed;
-      } else if (CHINESE_NUMBER_MAP[seasonPro] !== undefined) {
-        seasonNum = CHINESE_NUMBER_MAP[seasonPro]!;
-      }
-      break;
+  const seasonRaw = (() => {
+    const explicitMatch = nameSeason.match(/\bS\d{1,2}\b/i)
+      ?? nameSeason.match(/\bSeason\s+\d{1,2}(?:st|nd|rd|th)?\b/i)
+      ?? nameSeason.match(/\b\d{1,2}(?:st|nd|rd|th)\s+Season\b/i)
+      ?? nameSeason.match(/第\s*[一二三四五六七八九十\d]+\s*[季期篇]/);
+    if (explicitMatch) {
+      return explicitMatch[0];
     }
-  }
+
+    const bareTrailingSeasonMatch = nameSeason.match(/(?:^|[\s/])([2-9]|1\d)\s*$/);
+    return bareTrailingSeasonMatch?.[1] ?? String(seasonNum);
+  })();
+
+  const name = stripSeasonCues(nameSeason, seasonNum, seasonRaw);
 
   return { name, seasonRaw, season: seasonNum };
 }

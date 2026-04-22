@@ -35,6 +35,7 @@ describe("rawParser", () => {
       "[黒ネズミたち] 关于我转生变成史莱姆这档事 第四季 / Tensei shitara Slime Datta Ken 4th Season - 01 (B-Global 1920x1080 HEVC AAC MKV)[286.5 MB]"
     );
     expect(r).not.toBeNull();
+    expect(r!.season).toBe(4);
     expect(r!.episode).toBe(1);
     expect(r!.group).toBe("黒ネズミたち");
   });
@@ -178,7 +179,35 @@ describe("rawParser", () => {
       "[黒ネズミたち] 魔都精兵的奴隶 第二季 / Mato Seihei no Slave 2 - 01 (B-Global 1920x1080 HEVC AAC MKV)[292.2 MB]"
     );
     expect(r).not.toBeNull();
+    expect(r!.season).toBe(2);
     expect(r!.source).toBe("B-Global");
+  });
+
+  test("season extraction: bare sequel numeral title", () => {
+    const r = rawParser(
+      "[Dynamis One] Otonari no Tenshi-sama 2 - 01 (CR 1920x1080 AVC AAC MKV) [0512B487].mkv"
+    );
+    expect(r).not.toBeNull();
+    expect(r!.season).toBe(2);
+    expect(r!.episode).toBe(1);
+  });
+
+  test("season extraction: ordinal english season title", () => {
+    const r = rawParser(
+      "[Dynamis One] Himesama _Goumon_ no Jikan desu 2nd Season - 17 (CR 1920x1080 AVC AAC MKV) [6C2F2AAC].mkv"
+    );
+    expect(r).not.toBeNull();
+    expect(r!.season).toBe(2);
+    expect(r!.episode).toBe(17);
+  });
+
+  test("season extraction: ordinal english fourth season title", () => {
+    const r = rawParser(
+      "[Dynamis One] Mairimashita! Iruma-kun 4th Season - 02 (CR 1920x1080 AVC AAC MKV) [827D2187].mkv"
+    );
+    expect(r).not.toBeNull();
+    expect(r!.season).toBe(4);
+    expect(r!.episode).toBe(2);
   });
 
   test("GB + TSDM with MP4 format", () => {

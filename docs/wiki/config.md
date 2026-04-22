@@ -105,7 +105,9 @@
 说明：
 
 - `CollectionBoard` 读取收藏列表依赖该 token
-- `advance` 重命名模式在源已绑定 `bangumiSubjectId` 时也会用它读取官方标题与年份
+- `advance` 重命名模式在源已绑定 `bangumiSubjectId` 时会用它读取官方标题、年份和权威季号上下文
+- 如果 Bangumi subject 具备明确季号，或存在可靠的单前传链与已知集数，运行时会据此修正 `SxxEyy`、`Season xx` 文件夹和重复判定
+- 如果没有 token，或 Bangumi 上下文不完整，运行时会保守回退到原始标题解析；TMDB 只补标题与年份，不负责权威季号覆盖
 
 ---
 
@@ -124,4 +126,5 @@
 
 - 配置修改通过 `PATCH /api/config` 即时生效
 - 更新 `tmdb` 或 `bangumi` 配置时，服务端会重新初始化对应客户端
+- 季号相关改动建议先跑 focused suite，再做 replay：`tests/core/parser.test.ts`、`tests/core/renamer.test.ts`、`tests/core/pipeline-replay.test.ts`
 - `general.dbPath` 和 `pikpak.tokenCachePath` 默认位于 `data/` 下，属于运行时文件，不进入 git
