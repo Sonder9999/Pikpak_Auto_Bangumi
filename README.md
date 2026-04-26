@@ -153,9 +153,11 @@ This project stands on ideas, workflows, and integration experience from the fol
 
 - [EstrellaXD/Auto_Bangumi](https://github.com/EstrellaXD/Auto_Bangumi)
 - [CuteLeaf/Firefly](https://github.com/CuteLeaf/Firefly)
+- [SakiRinn/dandanplay-api](https://github.com/SakiRinn/dandanplay-api)
 - [Sonder9999/pikpak_calssify](https://github.com/Sonder9999/pikpak_calssify)
 - [Quan666/PikPakAPI](https://github.com/Quan666/PikPakAPI)
 - [Bangumi](https://bangumi.tv/)
+- [DanDanPlay](https://www.dandanplay.com/)
 - [Mikan Project](https://mikanani.me/)
 
 ## Notes

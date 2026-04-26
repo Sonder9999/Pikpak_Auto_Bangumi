@@ -45,6 +45,40 @@ if not exist "node_modules\" (
     echo [Info] Dependencies are already installed.
 )
 
+:: Check and install frontend dependencies
+if not exist "frontend\node_modules\" (
+    echo [Info] frontend node_modules not found. Installing frontend dependencies...
+    pushd frontend
+    call bun install
+    if !ERRORLEVEL! NEQ 0 (
+        echo [Error] Failed to install frontend dependencies.
+        popd
+        pause
+        exit /b 1
+    )
+    popd
+    echo [Info] Frontend dependencies installed successfully.
+) else (
+    echo [Info] Frontend dependencies are already installed.
+)
+
+:: Build frontend assets when missing
+if not exist "frontend\dist\index.html" (
+    echo [Info] Frontend dist not found. Building frontend assets...
+    pushd frontend
+    call bun run build
+    if !ERRORLEVEL! NEQ 0 (
+        echo [Error] Failed to build frontend assets.
+        popd
+        pause
+        exit /b 1
+    )
+    popd
+    echo [Info] Frontend built successfully.
+) else (
+    echo [Info] Frontend dist is already available.
+)
+
 :: Start the application
 echo [Info] Starting the application...
 call bun run start
